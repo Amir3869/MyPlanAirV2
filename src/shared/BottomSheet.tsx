@@ -41,7 +41,7 @@ export const BottomSheet = ({
               <X size={18} />
             </button>
           </div>
-          <div className="px-5 py-5">{children}</div>
+          <div className="px-5 pt-5 pb-28">{children}</div>
         </motion.div>
       </motion.div>
     )}

@@ -8,6 +8,12 @@
   --c-accent: #8b5cf6;
   --c-accent-2: #ec4899;
 
+  /* ✅ NOUVEAU — Variables accent thème (boutons CTA) */
+  --accent-from:     #7c8cff;
+  --accent-to:       #ec4899;
+  --accent-from-rgb: 124, 140, 255;
+  --accent-label:    #a5b4fc;
+
   /* Glass */
   --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-bg-strong: rgba(255, 255, 255, 0.10);
@@ -89,9 +95,10 @@ body {
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button {
   -webkit-appearance: none;
+  appearance: none;
   margin: 0;
 }
-input[type=number] { -moz-appearance: textfield; }
+input[type=number] { appearance: textfield; }
 
 /* Animated gradient bg */
 @keyframes auroraDrift {

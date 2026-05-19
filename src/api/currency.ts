@@ -1,40 +1,128 @@
-// Exchange rates — uses ExchangeRate.host (no API key, free)
-// With a curated offline fallback for full reliability
+// src/api/currency.ts
+// Taux de change — Via Cloudflare Worker (proxy Frankfurter) + fallback offline
 
+// ─────────────────────────────────────────────────────────────────────────────
+// URL du Worker (même base que cloud.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+const env = (import.meta as any).env as Record<string, string | undefined>;
+const API_BASE = (
+  env.VITE_MYTRIP_API_BASE ?? 'https://mytrip-api.amirsfr38.workers.dev'
+).replace(/\/$/, '');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Taux offline de référence (base EUR)
+// ─────────────────────────────────────────────────────────────────────────────
 const FALLBACK_RATES_EUR: Record<string, number> = {
-  EUR: 1, USD: 1.08, GBP: 0.85, JPY: 162, CHF: 0.96, CAD: 1.47, AUD: 1.62,
-  NZD: 1.78, CNY: 7.82, KRW: 1450, THB: 38.5, IDR: 17000, SGD: 1.46,
-  HKD: 8.45, VND: 27000, AED: 3.97, TRY: 35, MAD: 10.8, EGP: 53,
-  MXN: 21.5, BRL: 6.4, ARS: 1100, PEN: 4.05, ZAR: 20, KES: 140,
-  DKK: 7.46, SEK: 11.4, NOK: 11.7, ISK: 150,
+  EUR: 1,      USD: 1.08,   GBP: 0.85,   JPY: 162,    CHF: 0.96,
+  CAD: 1.47,   AUD: 1.62,   NZD: 1.78,   CNY: 7.82,   KRW: 1450,
+  THB: 38.5,   IDR: 17000,  SGD: 1.46,   HKD: 8.45,   VND: 27000,
+  AED: 3.97,   TRY: 35,     MAD: 10.8,   EGP: 53,     MXN: 21.5,
+  BRL: 6.4,    ARS: 1100,   PEN: 4.05,   ZAR: 20,     KES: 140,
+  DKK: 7.46,   SEK: 11.4,   NOK: 11.7,   ISK: 150,    PLN: 4.25,
+  HUF: 390,    CZK: 25.2,   RON: 4.97,   HRK: 7.53,   BGN: 1.96,
+  GEL: 2.92,   AMD: 420,    UZS: 13600,  KZT: 510,    INR: 90,
+  PKR: 300,    BDT: 118,    LKR: 320,    NPR: 144,    MYR: 5.05,
+  PHP: 62,     TWD: 35,     MMK: 2270,   KHR: 4380,   QAR: 3.93,
+  SAR: 4.05,   ILS: 3.98,   UAH: 44.5,   RUB: 99,     COP: 4500,
+  CLP: 1020,   PYG: 8100,   UYU: 43,     BOB: 7.5,    DZD: 145,
+  TND: 3.35,   XOF: 655,    XAF: 655,    GHS: 16.5,
+  NGN: 1750,   TZS: 2850,   JOD: 0.77,   KWD: 0.33,   BHD: 0.41,
+  OMR: 0.42,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversion offline via EUR comme devise pivot
+// ─────────────────────────────────────────────────────────────────────────────
 export const convertOffline = (from: string, to: string, amount: number): number => {
+  if (from === to) return amount;
   const fr = FALLBACK_RATES_EUR[from] ?? 1;
-  const tr = FALLBACK_RATES_EUR[to] ?? 1;
-  // Convert via EUR base
-  const eur = amount / fr;
-  return eur * tr;
+  const tr = FALLBACK_RATES_EUR[to]   ?? 1;
+  return (amount / fr) * tr;
 };
 
-export type RateResult = { rate: number; source: 'live' | 'offline'; updatedAt: string };
+// ─────────────────────────────────────────────────────────────────────────────
+// Type résultat
+// ─────────────────────────────────────────────────────────────────────────────
+export type RateResult = {
+  rate:      number;
+  source:    'live' | 'offline';
+  updatedAt: string;
+};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cache mémoire — TTL 15 minutes
+// ─────────────────────────────────────────────────────────────────────────────
+type CacheEntry = { rate: number; ts: number };
+const rateCache = new Map<string, CacheEntry>();
+const CACHE_TTL = 15 * 60 * 1000;
+
+const getCacheKey = (from: string, to: string): string => `${from}_${to}`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fetchRate — Via Worker Cloudflare (proxy Frankfurter sans CORS)
+//
+// POURQUOI LE WORKER ?
+// api.frankfurter.app bloque les appels directs depuis le navigateur (CORS).
+// Le Worker Cloudflare n'a pas cette restriction (appel serveur→serveur).
+// On appelle donc GET /currency?from=EUR&to=JPY sur notre Worker,
+// qui lui appelle Frankfurter et nous retourne le taux.
+//
+// Fallback : taux hardcodés via EUR comme pivot (toujours disponibles offline)
+// ─────────────────────────────────────────────────────────────────────────────
 export const fetchRate = async (from: string, to: string): Promise<RateResult> => {
-  if (from === to) return { rate: 1, source: 'offline', updatedAt: new Date().toISOString() };
-  // Try live API
+  if (from === to) {
+    return { rate: 1, source: 'live', updatedAt: new Date().toISOString() };
+  }
+
+  const cacheKey = getCacheKey(from, to);
+
+  // ── Cache mémoire ─────────────────────────────────────────────────────────
+  const cached = rateCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return {
+      rate:      cached.rate,
+      source:    'live',
+      updatedAt: new Date(cached.ts).toISOString(),
+    };
+  }
+
+  // ── Appel via Worker (proxy sans CORS) ────────────────────────────────────
   try {
-    const url = `https://api.exchangerate.host/convert?from=${from}&to=${to}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    const workerUrl = `${API_BASE}/currency?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const res = await fetch(workerUrl, {
+      signal: AbortSignal.timeout(8000),
+    });
+
     if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data.result === 'number' && data.result > 0) {
-        return { rate: data.result, source: 'live', updatedAt: new Date().toISOString() };
+      const data = await res.json() as { ok: boolean; rate?: number; source?: string };
+
+      if (data.ok && typeof data.rate === 'number' && data.rate > 0) {
+        // ✅ Succès — mise en cache
+        rateCache.set(cacheKey, { rate: data.rate, ts: Date.now() });
+        return {
+          rate:      data.rate,
+          source:    'live',
+          updatedAt: new Date().toISOString(),
+        };
       }
     }
+    // Réponse Worker OK mais taux invalide ou devise non supportée → fallback
   } catch {
-    // fall through
+    // Timeout ou Worker indisponible → fallback offline
   }
-  // Offline fallback
-  const rate = convertOffline(from, to, 1);
-  return { rate, source: 'offline', updatedAt: new Date().toISOString() };
+
+  // ── Fallback offline ──────────────────────────────────────────────────────
+  const offlineRate = convertOffline(from, to, 1);
+  return {
+    rate:      offlineRate,
+    source:    'offline',
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vider le cache
+// ─────────────────────────────────────────────────────────────────────────────
+export const clearRateCache = (): void => {
+  rateCache.clear();
 };
