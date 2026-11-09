@@ -12,8 +12,15 @@ interface SpinnerProps {
 }
 
 export const Spinner = ({ size = 32, label, className = '' }: SpinnerProps) => (
-  <div className={`flex flex-col items-center justify-center gap-3 py-8 ${className}`}>
+  <div
+    className={`flex flex-col items-center justify-center gap-3 py-8 ${className}`}
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    aria-label={label ? undefined : 'Chargement'}
+  >
     <motion.div
+      aria-hidden="true"
       animate={{ rotate: 360 }}
       transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}
       style={{
@@ -39,8 +46,15 @@ interface MiniSpinnerProps {
 }
 
 export const MiniSpinner = ({ label }: MiniSpinnerProps) => (
-  <div className="flex items-center gap-2 py-1">
+  <div
+    className="flex items-center gap-2 py-1"
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    aria-label={label ? undefined : 'Chargement'}
+  >
     <motion.div
+      aria-hidden="true"
       animate={{ rotate: 360 }}
       transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }}
       className="flex-shrink-0"

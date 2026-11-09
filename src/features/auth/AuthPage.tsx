@@ -1,10 +1,9 @@
 // src/features/auth/AuthPage.tsx
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useSignIn, useSignUp, useUser } from '@clerk/clerk-react';
+import { useSignIn, useSignUp } from '@clerk/clerk-react';
 import { useTripStore } from '../../store/tripStore';
-import { Plane, Mail, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
-import { OnboardingFlow } from './OnboardingFlow';
+import { Mail, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ICÔNES SVG
@@ -32,13 +31,11 @@ export const AuthPage = () => {
   const { signIn, isLoaded: signInLoaded } = useSignIn();
   const { signUp, isLoaded: signUpLoaded } = useSignUp();
 
-  // ✅ Store local — onboarding + userName
-  const onboardingDone = useTripStore((s) => s.onboardingDone);
+  // ✅ Store local — userName
   const userName       = useTripStore((s) => s.userName);
   const setAuthed      = useTripStore((s) => s.setAuthed);
 
   // ── États locaux ──────────────────────────────────────────────────────────
-  const [showOnboarding, setShowOnboarding] = useState(!onboardingDone);
   const [showEmailForm,  setShowEmailForm]  = useState(false);
   const [email,          setEmail]          = useState('');
   const [password,       setPassword]       = useState('');
@@ -46,11 +43,6 @@ export const AuthPage = () => {
   const [loading,        setLoading]        = useState(false);
   const [error,          setError]          = useState<string | null>(null);
   const [isSignUp,       setIsSignUp]       = useState(false);
-
-  // ── Onboarding terminé ────────────────────────────────────────────────────
-  const handleOnboardingComplete = () => {
-    setShowOnboarding(false);
-  };
 
   // ── Google OAuth ──────────────────────────────────────────────────────────
   const continueWithGoogle = async () => {
@@ -64,7 +56,7 @@ export const AuthPage = () => {
         redirectUrlComplete: '/',
       });
     } catch (err) {
-      setError('Erreur Google. Réessayez.');
+      setError('Erreur Google. Réessaie.');
       setLoading(false);
     }
   };
@@ -81,7 +73,7 @@ export const AuthPage = () => {
         redirectUrlComplete: '/',
       });
     } catch (err) {
-      setError('Erreur Apple. Réessayez.');
+      setError('Erreur Apple. Réessaie.');
       setLoading(false);
     }
   };
@@ -107,7 +99,7 @@ export const AuthPage = () => {
           setAuthed(true, userName);
         } else {
           // Vérification email requise
-          setError('Vérifiez votre email pour confirmer votre compte.');
+          setError('Vérifie ton email pour confirmer ton compte.');
         }
       } else {
         // ── Connexion ──
@@ -118,7 +110,7 @@ export const AuthPage = () => {
         if (result.status === 'complete') {
           setAuthed(true, userName);
         } else {
-          setError('Connexion incomplète. Réessayez.');
+          setError('Connexion incomplète. Réessaie.');
         }
       }
     } catch (err: unknown) {
@@ -129,31 +121,20 @@ export const AuthPage = () => {
       if (code === 'form_password_incorrect') {
         setError('Mot de passe incorrect.');
       } else if (code === 'form_identifier_not_found') {
-        setError('Aucun compte avec cet email. Créez un compte !');
+        setError('Aucun compte avec cet email. Crée un compte !');
         setIsSignUp(true);
       } else if (code === 'form_password_pwned') {
         setError('Mot de passe trop commun. Choisissez-en un autre.');
       } else if (code === 'form_identifier_exists') {
-        setError('Email déjà utilisé. Connectez-vous !');
+        setError('Email déjà utilisé. Connecte-toi !');
         setIsSignUp(false);
       } else {
-        setError('Une erreur est survenue. Réessayez.');
+        setError('Une erreur est survenue. Réessaie.');
       }
     } finally {
       setLoading(false);
     }
   };
-
-  // ── Sans compte (mode local) ──────────────────────────────────────────────
-  // ✅ Conservé pour le MVP — sera supprimé quand Supabase est branché
-  const continueWithoutAccount = () => {
-    setAuthed(true, userName);
-  };
-
-  // ── Onboarding en cours ───────────────────────────────────────────────────
-  if (showOnboarding) {
-    return <OnboardingFlow onComplete={handleOnboardingComplete} />;
-  }
 
   // ── Page Auth ─────────────────────────────────────────────────────────────
   return (
@@ -184,41 +165,15 @@ export const AuthPage = () => {
         className="relative z-10 w-full max-w-md px-6 flex flex-col items-center"
       >
 
-        {/* Logo */}
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1,   opacity: 1 }}
-          transition={{ delay: 0.1, type: 'spring', damping: 16 }}
-          className="inline-flex items-center justify-center w-20 h-20 rounded-3xl mb-6"
-          style={{
-            background: 'linear-gradient(135deg, #7c8cff 0%, #ec4899 100%)',
-            boxShadow:  '0 20px 60px rgba(124,140,255,0.5)',
-          }}
-        >
-          <motion.div
-            animate={{ y: [0, -3, 0], rotate: [-8, -12, -8] }}
-            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-          >
-            <Plane size={34} className="text-white" />
-          </motion.div>
-        </motion.div>
-
-        {/* Titre */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="text-center mb-10"
-        >
-          <h1 className="font-display text-5xl font-extrabold tracking-tighter mb-2">
-            MyTrip
-          </h1>
-          <p className="text-white/60 text-lg">
-            {userName && userName !== 'Voyageur'
-              ? `Prêt, ${userName} ?`
-              : 'Prêt pour l\'aventure ?'}
-          </p>
-        </motion.div>
+        {/* Logo marque */}
+        <div className="relative mb-8 flex items-center justify-center w-full h-[220px] overflow-hidden">
+          <img
+            src="/brand/logo-auth.svg"
+            alt="My Plan'Air"
+            className="max-w-none object-contain"
+            style={{ width: 1450, height: 600, transform: 'translateX(20px)' }}
+          />
+        </div>
 
         {/* Message d'erreur global */}
         <AnimatePresence>
@@ -276,39 +231,19 @@ export const AuthPage = () => {
                 Continuer avec Apple
               </motion.button>
 
-              {/* Email */}
+              {/* Email — reporté à la migration Supabase */}
               <motion.button
-                whileTap={{ scale: 0.97 }}
-                onClick={() => { setShowEmailForm(true); setError(null); }}
-                disabled={loading}
-                className="w-full h-14 rounded-2xl font-semibold flex items-center justify-center gap-3 tap disabled:opacity-60"
+                whileTap={{ scale: 1 }}
+                disabled
+                className="w-full h-14 rounded-2xl font-semibold flex items-center justify-center gap-3 opacity-55 cursor-not-allowed"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border:     '1px solid rgba(255,255,255,0.12)',
-                  color:      'rgba(255,255,255,0.85)',
+                  background: 'rgba(255,255,255,0.045)',
+                  border:     '1px solid rgba(255,255,255,0.09)',
+                  color:      'rgba(255,255,255,0.45)',
                 }}
               >
                 <Mail size={18} />
-                Continuer avec un email
-              </motion.button>
-
-              {/* Séparateur */}
-              <div className="flex items-center gap-3 py-2">
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-xs text-white/30">ou</span>
-                <div className="flex-1 h-px bg-white/10" />
-              </div>
-
-              {/* Sans compte */}
-              <motion.button
-                whileTap={{ scale: 0.97 }}
-                onClick={continueWithoutAccount}
-                disabled={loading}
-                className="w-full h-12 rounded-2xl font-medium flex items-center justify-center gap-2 tap disabled:opacity-60"
-                style={{ color: 'rgba(255,255,255,0.45)' }}
-              >
-                Explorer sans compte
-                <ArrowRight size={14} />
+                Email bientôt disponible
               </motion.button>
             </motion.div>
 
@@ -435,7 +370,7 @@ export const AuthPage = () => {
           transition={{ delay: 0.6 }}
           className="mt-10 text-xs text-white/25 text-center leading-relaxed"
         >
-          En continuant, vous acceptez nos{' '}
+          En continuant, tu acceptes nos{' '}
           <span className="underline cursor-pointer">Conditions d'utilisation</span>
           {' '}et notre{' '}
           <span className="underline cursor-pointer">Politique de confidentialité</span>

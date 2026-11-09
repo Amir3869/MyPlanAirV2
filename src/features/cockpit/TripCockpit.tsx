@@ -1,17 +1,25 @@
 // src/features/cockpit/TripCockpit.tsx
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cockpit Voyage — Layout principal d'un voyage
+// Header : [←] + 🇯🇵 Pays · Jour X/Y + [📤 Partager] [👥 Team]
+// Nav bas : [Aperçu] [Parcours] [Budget] [Prep.] [ARIA]
+// ← Smart : Overview → /voyages | autres pages → /overview
+// ═══════════════════════════════════════════════════════════════════════════════
+
 import { useState } from 'react';
-import { useNavigate, useParams, Outlet, NavLink } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate, useParams, useLocation, Outlet, NavLink } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
   ChevronLeft, Share2, LayoutDashboard,
-  Map, Wallet, ListChecks, Trash2, AlertTriangle,
-  MessageCircle,
+  Map, Wallet, ListChecks, MessageCircle, Users,
 } from 'lucide-react';
-import { useTrip, useTripStore } from '../../store/tripStore';
+import { useTrip } from '../../store/tripStore';
 import { Flag } from '../../shared/Flag';
 import { BottomSheet } from '../../shared/BottomSheet';
 import { useToast } from '../../shared/Toast';
 import { bgOpacityForTime, dayCounter, fmtRange } from '../../utils/dateHelpers';
+
+// ─── Helper : encodage partage ──────────────────────────────────────────────
 
 const encodeTripForShare = (trip: object): string => {
   try {
@@ -23,15 +31,18 @@ const encodeTripForShare = (trip: object): string => {
   }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRIP COCKPIT
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export const TripCockpit = () => {
   const { id }      = useParams<{ id: string }>();
   const trip        = useTrip(id);
   const navigate    = useNavigate();
-  const removeTrip  = useTripStore((s) => s.removeTrip);
+  const location    = useLocation();
   const { success } = useToast();
 
-  const [shareOpen,  setShareOpen]  = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   if (!trip) {
     return (
@@ -62,11 +73,24 @@ export const TripCockpit = () => {
     }
   };
 
-  const handleDelete = () => {
-    removeTrip(trip.id);
-    setDeleteOpen(false);
-    navigate('/');
+  // ── Smart ← : Overview → /voyages, autres → /overview ──
+  const handleBack = () => {
+    const currentPath = location.pathname;
+    if (currentPath.endsWith('/overview')) {
+      navigate('/voyages');
+    } else {
+      navigate(`/trip/${trip.id}/overview`);
+    }
   };
+
+  // ── 5 onglets nav bas (comme l'original GitHub) ──
+  const NAV_ITEMS = [
+    { to: 'overview',  icon: LayoutDashboard, label: 'Aperçu'   },
+    { to: 'parcours',  icon: Map,             label: 'Parcours' },
+    { to: 'budget',    icon: Wallet,          label: 'Budget'   },
+    { to: 'essentials',icon: ListChecks,      label: 'Prep.'    },
+    { to: 'chat',      icon: MessageCircle,   label: 'ARIA'     },
+  ] as const;
 
   return (
     <div className="min-h-screen relative">
@@ -89,16 +113,19 @@ export const TripCockpit = () => {
         }}
       />
 
-      {/* Header */}
+      {/* ═══ Header ═══ */}
       <header className="relative z-10 px-5 pt-safe">
         <div className="max-w-3xl mx-auto pt-3 flex items-center justify-between">
+          {/* ← Retour (smart) */}
           <button
-            onClick={() => navigate('/')}
+            onClick={handleBack}
             className="w-10 h-10 rounded-full glass flex items-center justify-center tap"
             aria-label="Retour"
           >
             <ChevronLeft size={20} />
           </button>
+
+          {/* Droite : [📤 Partager] [👥 Team] */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShareOpen(true)}
@@ -108,15 +135,16 @@ export const TripCockpit = () => {
               <Share2 size={16} />
             </button>
             <button
-              onClick={() => setDeleteOpen(true)}
-              className="w-10 h-10 rounded-full glass flex items-center justify-center tap text-red-400"
-              aria-label="Supprimer le voyage"
+              onClick={() => navigate(`/trip/${trip.id}/team`)}
+              className="w-10 h-10 rounded-full glass flex items-center justify-center tap"
+              aria-label="Team"
             >
-              <Trash2 size={16} />
+              <Users size={16} />
             </button>
           </div>
         </div>
 
+        {/* Titre voyage */}
         <div className="max-w-3xl mx-auto mt-6 mb-4">
           <div className="flex items-center gap-2 mb-2">
             <Flag code={trip.countryCode} size={20} />
@@ -139,17 +167,11 @@ export const TripCockpit = () => {
         <Outlet context={{ trip }} />
       </main>
 
-      {/* ✅ Navigation bottom — couleur thème via CSS variables */}
-      <nav className="fixed bottom-0 left-0 right-0 z-30 pb-safe">
+      {/* ═══ Navigation bottom — 5 onglets ═══ */}
+      <nav className="fixed bottom-0 left-0 right-0 z-30 pb-safe" aria-label="Navigation du voyage">
         <div className="max-w-3xl mx-auto px-4 pb-2">
           <div className="glass-strong rounded-[28px] p-1.5 flex items-center justify-around">
-            {[
-              { to: 'overview',   icon: LayoutDashboard, label: 'Aperçu'   },
-              { to: 'parcours',   icon: Map,             label: 'Parcours' },
-              { to: 'budget',     icon: Wallet,          label: 'Budget'   },
-              { to: 'essentials', icon: ListChecks,      label: 'Prep.'    },
-              { to: 'chat',       icon: MessageCircle,   label: 'ARIA'     },
-            ].map(({ to, icon: Icon, label }) => (
+            {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -163,13 +185,10 @@ export const TripCockpit = () => {
                   <>
                     {isActive && (
                       <motion.div
-                        layoutId="navPill"
+                        layoutId="cockpitNavPill"
                         className="absolute inset-0 rounded-[22px]"
                         style={{
-                          // ✅ CSS variables thème — s'adapte automatiquement
-                          background: to === 'chat'
-                            ? 'rgba(var(--accent-from-rgb), 0.45)'
-                            : 'rgba(var(--accent-from-rgb), 0.32)',
+                          background: 'rgba(var(--accent-from-rgb), 0.32)',
                           border: '1px solid rgba(255,255,255,0.15)',
                           backdropFilter: 'blur(20px)',
                           WebkitBackdropFilter: 'blur(20px)',
@@ -214,7 +233,6 @@ export const TripCockpit = () => {
           onClick={handleCopy}
           className="w-full h-12 rounded-2xl font-semibold text-white tap flex items-center justify-center gap-2"
           style={{
-            // ✅ CSS variables thème
             background: 'linear-gradient(135deg, var(--accent-from) 0%, var(--accent-to) 100%)',
           }}
         >
@@ -225,70 +243,6 @@ export const TripCockpit = () => {
           Ce lien fonctionne sur tous les appareils · Données encodées dans l'URL
         </p>
       </BottomSheet>
-
-      {/* Modal Suppression */}
-      <AnimatePresence>
-        {deleteOpen && (
-          <motion.div
-            className="fixed inset-0 z-[150] flex items-center justify-center p-5"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setDeleteOpen(false)}
-          >
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-              className="relative w-full max-w-sm rounded-3xl p-6 text-center"
-              style={{
-                background:     'rgba(20,20,28,0.95)',
-                border:         '1px solid rgba(255,255,255,0.12)',
-                backdropFilter: 'blur(32px)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4"
-                style={{ background: 'rgba(239,68,68,0.15)' }}
-              >
-                <AlertTriangle size={26} style={{ color: '#ef4444' }} />
-              </div>
-              <h2 className="text-xl font-bold tracking-tight mb-2">
-                Supprimer ce voyage ?
-              </h2>
-              <p className="text-sm text-white/55 mb-6 leading-relaxed">
-                <span className="text-white font-semibold">{trip.destination}</span>{' '}
-                et toutes ses données seront définitivement supprimés.
-                Cette action est irréversible.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setDeleteOpen(false)}
-                  className="flex-1 h-12 rounded-2xl font-semibold text-white/80 tap"
-                  style={{
-                    background: 'rgba(255,255,255,0.08)',
-                    border:     '1px solid rgba(255,255,255,0.12)',
-                  }}
-                >
-                  Annuler
-                </button>
-                <button
-                  onClick={handleDelete}
-                  className="flex-1 h-12 rounded-2xl font-semibold text-white tap"
-                  style={{
-                    background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                  }}
-                >
-                  Supprimer
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

@@ -25,6 +25,16 @@ interface ToastContextValue {
 // ── Context ────────────────────────────────────────────────────────
 const ToastContext = createContext<ToastContextValue | null>(null);
 
+// ── Config ────────────────────────────────────────────────────────
+const MAX_TOASTS = 4;
+
+const createToastId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 // ── Config visuelle ────────────────────────────────────────────────
 const VARIANT_CONFIG: Record<ToastVariant, {
   icon: React.ElementType;
@@ -111,8 +121,8 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
     variant: ToastVariant = 'info',
     duration?: number,
   ) => {
-    const id = crypto.randomUUID();
-    setToasts(prev => [...prev.slice(-3), { id, message, variant, duration }]);
+    const id = createToastId();
+    setToasts(prev => [...prev.slice(-(MAX_TOASTS - 1)), { id, message, variant, duration }]);
   }, []);
 
   const value: ToastContextValue = {

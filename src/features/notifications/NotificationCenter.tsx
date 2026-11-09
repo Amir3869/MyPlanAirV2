@@ -1,16 +1,15 @@
 // src/features/notifications/NotificationCenter.tsx
-// ════════════════════════════════════════════════
-// SEUL CHANGEMENT PAR RAPPORT AU FICHIER EXISTANT :
-// Fonction getNavigationSection dans NotifCard
-// + handleNavigate dans NotificationCenter
-// Tout le reste est IDENTIQUE à ce que tu as envoyé
-// ════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// Centre de notifications MyTrip — alertes locales premium
+// Génération intelligente, agenda, réglages et navigation contextuelle
+// ═══════════════════════════════════════════════════════════════════════════════
 import { useEffect, useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bell, X, CheckCheck, Plane,
   Calendar, Lightbulb, ChevronRight,
   ExternalLink, Wallet, BellOff, Trash2,
+  FileText, Cloud,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -18,22 +17,30 @@ import {
   type AppNotification,
   type Trip,
 } from '../../store/tripStore';
-import { tripStatus, daysBetween } from '../../utils/dateHelpers';
+import { tripStatus, daysBetween, addDaysISO } from '../../utils/dateHelpers';
 import { haptic } from '../../utils/haptic';
+import { getExpensesBudgetTotal } from '../../utils/expenseHelpers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS AGENDA
 // ─────────────────────────────────────────────────────────────────────────────
+const escapeIcsText = (value: string): string => value
+  .replace(/\\/g, '\\\\')
+  .replace(/;/g, '\\;')
+  .replace(/,/g, '\\,')
+  .replace(/\r?\n/g, '\\n');
+
 const buildGoogleCalendarUrl = (params: {
   title: string; startDate: string; endDate: string; details?: string;
 }): string => {
   const fmt  = (iso: string) => iso.replace(/-/g, '');
   const base = 'https://calendar.google.com/calendar/render';
+  const endExclusive = addDaysISO(params.endDate, 1);
   const qs   = new URLSearchParams({
     action:  'TEMPLATE',
     text:    params.title,
-    dates:   `${fmt(params.startDate)}/${fmt(params.endDate)}`,
-    details: params.details ?? 'Voyage créé avec MyTrip ✈️',
+    dates:   `${fmt(params.startDate)}/${fmt(endExclusive)}`,
+    details: params.details ?? 'Voyage créé avec My Plan’Air ✈️',
     sf:      'true',
     output:  'xml',
   });
@@ -45,14 +52,15 @@ const downloadICS = (params: {
 }) => {
   const fmt = (iso: string) => iso.replace(/-/g, '') + 'T000000Z';
   const uid = `mytrip-${Date.now()}@mytrip.app`;
+  const endExclusive = addDaysISO(params.endDate, 1);
   const icsContent = [
     'BEGIN:VCALENDAR', 'VERSION:2.0',
-    'PRODID:-//MyTrip//MyTrip App//FR',
+    'PRODID:-//MyPlanAir//My Plan’Air App//FR',
     'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `DTSTART;VALUE=DATE:${params.startDate.replace(/-/g, '')}`,
-    `DTEND;VALUE=DATE:${params.endDate.replace(/-/g, '')}`,
-    `SUMMARY:${params.title}`,
-    `DESCRIPTION:${params.details ?? 'Voyage créé avec MyTrip ✈️'}`,
+    `DTEND;VALUE=DATE:${endExclusive.replace(/-/g, '')}`,
+    `SUMMARY:${escapeIcsText(params.title)}`,
+    `DESCRIPTION:${escapeIcsText(params.details ?? 'Voyage créé avec My Plan’Air ✈️')}`,
     `UID:${uid}`,
     `DTSTAMP:${fmt(new Date().toISOString().slice(0, 10))}`,
     'STATUS:CONFIRMED', 'TRANSP:TRANSPARENT',
@@ -76,11 +84,12 @@ type Priority = 'urgent' | 'normal' | 'info';
 
 const getNotifPriority = (notif: AppNotification): Priority => {
   if (notif.type === 'countdown') {
-    const match = notif.title.match(/dans (\d+) jour/);
+    const match = `${notif.title} ${notif.body}`.match(/dans (\d+) jour/);
     const days  = match ? parseInt(match[1], 10) : 99;
     return days <= 3 ? 'urgent' : 'normal';
   }
   if (notif.type === 'checklist') return 'normal';
+  if (notif.type === 'documents') return 'normal';
   if (notif.type === 'rate')      return 'normal';
   return 'info';
 };
@@ -91,184 +100,261 @@ const PRIORITY_CONFIG: Record<Priority, { label: string; color: string; bg: stri
   info:   { label: 'Info',    color: '#56c5a4', bg: 'rgba(86,197,164,0.15)' },
 };
 
+const NOTIF_META: Record<AppNotification['type'], {
+  family: string;
+  action: string;
+  color: string;
+}> = {
+  countdown: { family: 'Départ',      action: 'Préparer le voyage',   color: '#7c8cff' },
+  checklist: { family: 'Préparation', action: 'Ouvrir la checklist',  color: '#56c5a4' },
+  documents: { family: 'Documents',   action: 'Ajouter mes documents', color: '#60a5fa' },
+  weather:   { family: 'Météo',       action: 'Voir la météo',        color: '#38bdf8' },
+  rate:      { family: 'Budget',      action: 'Voir le budget',       color: '#f0b24a' },
+  tip:       { family: 'En voyage',   action: 'Ouvrir le voyage',     color: '#ec4899' },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GÉNÉRATEUR INTELLIGENT
 // ─────────────────────────────────────────────────────────────────────────────
 export const useNotificationGenerator = () => {
   const trips                    = useTripStore((s) => s.trips);
-  const notifications            = useTripStore((s) => s.notifications);
   const notificationsEnabled     = useTripStore((s) => s.notificationsEnabled);
   const notifDisabledTrips       = useTripStore((s) => s.notifDisabledTrips);
   const addNotification          = useTripStore((s) => s.addNotification);
   const replaceOrAddNotification = useTripStore((s) => s.replaceOrAddNotification);
 
   useEffect(() => {
-    if (trips.length === 0)    return;
+    if (trips.length === 0) return;
     if (!notificationsEnabled) return;
 
-    const RECHECK_KEY  = 'mytrip-notif-lastcheck';
+    const RECHECK_KEY = 'mytrip-notif-lastcheck';
+    const SIGNATURE_KEY = 'mytrip-notif-signature';
     const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+    const buildSignature = (items: Trip[]): string => items
+      .map((trip) => {
+        const checklistDone = trip.checklist.filter((item) => item.done).length;
+        const expensesTotal = trip.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+        return [
+          trip.id,
+          trip.startDate,
+          trip.endDate,
+          trip.budget,
+          trip.currency,
+          trip.isRoadtrip ? 'roadtrip' : 'simple',
+          trip.destinations?.length ?? 0,
+          trip.checklist.length,
+          checklistDone,
+          trip.documents?.length ?? 0,
+          trip.expenses.length,
+          Math.round(expensesTotal * 100) / 100,
+          notifDisabledTrips.includes(trip.id) ? 'disabled' : 'enabled',
+        ].join('|');
+      })
+      .join('::');
+
+    const activeTrips = trips.filter((trip) => {
+      const status = tripStatus(trip.startDate, trip.endDate);
+      return status === 'upcoming' || status === 'ongoing';
+    });
+    if (activeTrips.length === 0) return;
+
+    const signature = buildSignature(activeTrips);
+    const lastSignature = sessionStorage.getItem(SIGNATURE_KEY);
     const lastCheckRaw = sessionStorage.getItem(RECHECK_KEY);
-    const lastCheck    = lastCheckRaw ? parseInt(lastCheckRaw, 10) : 0;
-    const now          = Date.now();
-    if (now - lastCheck < SIX_HOURS_MS) return;
+    const lastCheck = lastCheckRaw ? parseInt(lastCheckRaw, 10) : 0;
+    const now = Date.now();
+
+    if (signature === lastSignature && now - lastCheck < SIX_HOURS_MS) return;
     sessionStorage.setItem(RECHECK_KEY, String(now));
+    sessionStorage.setItem(SIGNATURE_KEY, signature);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const activeTrips = trips.filter((t) => {
-      const s = tripStatus(t.startDate, t.endDate);
-      return s === 'upcoming' || s === 'ongoing';
-    });
-    if (activeTrips.length === 0) return;
+    const sortedTrips = [...activeTrips]
+      .filter((trip) => !notifDisabledTrips.includes(trip.id))
+      .sort((a, b) => {
+        const sa = tripStatus(a.startDate, a.endDate);
+        const sb = tripStatus(b.startDate, b.endDate);
+        if (sa !== sb) return sa === 'ongoing' ? -1 : sb === 'ongoing' ? 1 : 0;
+        return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+      });
 
-    const sorted      = [...activeTrips].sort(
-      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
-    );
-    const ongoingTrip = sorted.find((t) => tripStatus(t.startDate, t.endDate) === 'ongoing');
-    const nextTrip: Trip = ongoingTrip ?? sorted[0];
-    if (!nextTrip) return;
-    if (notifDisabledTrips.includes(nextTrip.id)) return;
+    const relevantTrips = sortedTrips.filter((trip) => {
+      const status = tripStatus(trip.startDate, trip.endDate);
+      if (status === 'ongoing') return true;
+      const startDate = new Date(trip.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      const daysUntil = Math.round((startDate.getTime() - today.getTime()) / 86400000);
+      return daysUntil >= 0 && daysUntil <= 30;
+    }).slice(0, 3);
 
-    const status    = tripStatus(nextTrip.startDate, nextTrip.endDate);
-    const startDate = new Date(nextTrip.startDate);
-    startDate.setHours(0, 0, 0, 0);
-    const daysUntil = Math.round((startDate.getTime() - today.getTime()) / 86400000);
+    relevantTrips.forEach((nextTrip) => {
+      const status = tripStatus(nextTrip.startDate, nextTrip.endDate);
+      const startDate = new Date(nextTrip.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      const daysUntil = Math.round((startDate.getTime() - today.getTime()) / 86400000);
 
-    const label = nextTrip.isRoadtrip
-      ? `${nextTrip.country} · Roadtrip`
-      : nextTrip.destination;
+      const label = nextTrip.isRoadtrip
+        ? `${nextTrip.country} · Roadtrip`
+        : nextTrip.destination;
 
-    if (status === 'upcoming') {
-      if ([30, 14, 7, 3, 1].includes(daysUntil)) {
+      if (status === 'upcoming') {
+        if ([30, 14, 7, 3, 1].includes(daysUntil)) {
+          replaceOrAddNotification(
+            {
+              type:      'countdown',
+              tripId:    nextTrip.id,
+              dedupeKey: `countdown:${nextTrip.id}`,
+              title:     daysUntil <= 3
+                ? 'Dernière ligne droite'
+                : daysUntil <= 7
+                  ? `${label} approche`
+                  : `Départ dans ${daysUntil} jours`,
+              body:      daysUntil <= 3
+                ? `${label} commence dans ${daysUntil} jour${daysUntil > 1 ? 's' : ''}. Vérifie tes essentiels avant le départ.`
+                : daysUntil <= 7
+                  ? "Plus qu’une semaine pour finaliser les derniers détails."
+                  : `Il reste ${daysUntil} jours avant ta grande aventure.`,
+              startDate: nextTrip.startDate,
+              endDate:   nextTrip.endDate,
+              tripName:  label,
+            },
+            'countdown',
+          );
+        }
+
+        if (daysUntil <= 7 && daysUntil > 0) {
+          const remaining = nextTrip.checklist.filter((item) => !item.done).length;
+          if (remaining > 0) {
+            replaceOrAddNotification(
+              {
+                type:      'checklist',
+                tripId:    nextTrip.id,
+                dedupeKey: `checklist:${nextTrip.id}`,
+                title:     `${remaining} essentiel${remaining > 1 ? 's' : ''} à vérifier`,
+                body:      daysUntil <= 3
+                  ? `Il reste ${remaining} élément${remaining > 1 ? 's' : ''} à préparer avant ${label}.`
+                  : `Ta checklist pour ${label} n’est pas encore complète. Plus que ${daysUntil} jours.`,
+              },
+              'checklist',
+            );
+          }
+        }
+
+        if (daysUntil <= 3 && nextTrip.checklist.length === 0) {
+          addNotification({
+            type:      'checklist',
+            tripId:    nextTrip.id,
+            dedupeKey: `checklist-empty:${nextTrip.id}`,
+            title:     'Préparation à lancer',
+            body:      `Ton départ pour ${label} est proche. Ajoute quelques essentiels à ta checklist.`,
+          });
+        }
+
+        if (daysUntil <= 14 && (nextTrip.documents?.length ?? 0) === 0) {
+          addNotification({
+            type:      'documents',
+            tripId:    nextTrip.id,
+            dedupeKey: `documents-empty:${nextTrip.id}`,
+            title:     'Documents à centraliser',
+            body:      `Ajoute billets, réservations et papiers importants pour ${label}.`,
+          });
+        }
+
+        if (daysUntil <= 3) {
+          addNotification({
+            type:      'weather',
+            tripId:    nextTrip.id,
+            dedupeKey: `weather-upcoming:${nextTrip.id}`,
+            title:     'Météo à vérifier',
+            body:      'Ton départ approche. Regarde les prévisions pour ajuster tenues et activités.',
+          });
+        }
+
+        if (daysUntil <= 14 && nextTrip.budget === 0) {
+          addNotification({
+            type:      'rate',
+            tripId:    nextTrip.id,
+            dedupeKey: `budget-empty:${nextTrip.id}`,
+            title:     'Budget à poser',
+            body:      `Ajoute un budget pour garder une vision claire de ton voyage à ${label}.`,
+          });
+        }
+
+        if (nextTrip.budget > 0) {
+          const spent = getExpensesBudgetTotal(nextTrip.expenses, nextTrip.currency);
+          const percent = (spent / nextTrip.budget) * 100;
+          if (percent >= 80) {
+            replaceOrAddNotification(
+              {
+                type:      'rate',
+                tripId:    nextTrip.id,
+                dedupeKey: `budget-usage:${nextTrip.id}`,
+                title:     'Budget à surveiller',
+                body:      `Tu as utilisé environ ${Math.round(percent)}% du budget prévu pour ${label}.`,
+              },
+              'Budget à',
+            );
+          }
+        }
+
+        if (nextTrip.isRoadtrip && daysUntil <= 14 && (nextTrip.destinations?.length ?? 0) === 0) {
+          addNotification({
+            type:      'tip',
+            tripId:    nextTrip.id,
+            dedupeKey: `roadtrip-empty:${nextTrip.id}`,
+            title:     'Itinéraire à préciser',
+            body:      `Ajoute les villes de ton roadtrip en ${nextTrip.country} pour répartir tes journées.`,
+          });
+        }
+      }
+
+      if (status === 'ongoing') {
+        const totalDays = daysBetween(nextTrip.startDate, nextTrip.endDate);
+        const elapsed = daysBetween(nextTrip.startDate, new Date().toISOString().slice(0, 10));
+        const dayIndex = Math.min(elapsed, totalDays);
+
         replaceOrAddNotification(
           {
-            type:      'countdown',
+            type:      'tip',
             tripId:    nextTrip.id,
-            title:     `✈️ ${label} dans ${daysUntil} jour${daysUntil > 1 ? 's' : ''} !`,
-            body:      daysUntil <= 3
-              ? 'Dernière ligne droite — vérifiez votre checklist et vos documents.'
-              : daysUntil <= 7
-                ? "Plus qu'une semaine ! Finalisez votre préparation."
-                : `Il reste ${daysUntil} jours avant votre grande aventure.`,
-            startDate: nextTrip.startDate,
-            endDate:   nextTrip.endDate,
-            tripName:  label,
+            dedupeKey: `ongoing:${nextTrip.id}`,
+            title:     nextTrip.isRoadtrip ? 'Ton roadtrip continue' : 'Ton voyage continue',
+            body:      `Jour ${dayIndex} sur ${totalDays} ${nextTrip.isRoadtrip ? `en ${nextTrip.country}` : `à ${nextTrip.destination}`}. Garde une trace des dépenses et moments importants.`,
           },
-          'countdown',
+          'Jour',
         );
-      }
 
-      if (daysUntil <= 7 && daysUntil > 0) {
-        const remaining = nextTrip.checklist.filter((c) => !c.done).length;
-        if (remaining > 0) {
-          replaceOrAddNotification(
-            {
-              type:   'checklist',
-              tripId: nextTrip.id,
-              title:  `📋 ${remaining} item${remaining > 1 ? 's' : ''} restant${remaining > 1 ? 's' : ''} sur votre checklist`,
-              body:   daysUntil <= 3
-                ? `Urgence ! ${remaining} chose${remaining > 1 ? 's' : ''} à préparer avant ${label}.`
-                : `Checklist incomplète pour ${label}. Plus que ${daysUntil} jours !`,
-            },
-            'checklist',
-          );
+        const todayISO = new Date().toISOString().slice(0, 10);
+        addNotification({
+          type:      'weather',
+          tripId:    nextTrip.id,
+          dedupeKey: `weather-daily:${nextTrip.id}:${todayISO}`,
+          title:     'Météo du jour',
+          body:      `Avant de sortir ${nextTrip.isRoadtrip ? `en ${nextTrip.country}` : `à ${nextTrip.destination}`}, vérifie les prévisions et adapte ton parcours du jour.`,
+        });
+
+        if (nextTrip.budget > 0) {
+          const spent = getExpensesBudgetTotal(nextTrip.expenses, nextTrip.currency);
+          const percent = (spent / nextTrip.budget) * 100;
+          if (percent >= 80) {
+            replaceOrAddNotification(
+              {
+                type:      'rate',
+                tripId:    nextTrip.id,
+                dedupeKey: `budget-usage:${nextTrip.id}`,
+                title:     'Budget à surveiller',
+                body:      `Tu as utilisé environ ${Math.round(percent)}% du budget prévu. Garde une marge pour les derniers jours.`,
+              },
+              'Budget à',
+            );
+          }
         }
       }
-
-      if (daysUntil <= 3 && nextTrip.checklist.length === 0) {
-        const alreadyEmpty = notifications.some(
-          (n) => n.tripId === nextTrip.id && n.type === 'checklist' && n.title.includes('vide'),
-        );
-        if (!alreadyEmpty) {
-          addNotification({
-            type:   'checklist',
-            tripId: nextTrip.id,
-            title:  '📋 Checklist vide — départ imminent !',
-            body:   `Vous partez dans ${daysUntil} jour${daysUntil > 1 ? 's' : ''} pour ${label} sans rien dans la checklist.`,
-          });
-        }
-      }
-
-      if (daysUntil <= 14 && nextTrip.budget === 0) {
-        const alreadyBudget = notifications.some(
-          (n) => n.tripId === nextTrip.id && n.type === 'rate' && n.title.includes('Budget non défini'),
-        );
-        if (!alreadyBudget) {
-          addNotification({
-            type:   'rate',
-            tripId: nextTrip.id,
-            title:  '💰 Budget non défini pour ce voyage',
-            body:   `Définissez un budget pour ${label} afin de suivre vos dépenses.`,
-          });
-        }
-      }
-
-      if (nextTrip.budget > 0) {
-        const spent   = nextTrip.expenses.reduce((s, e) => s + e.amount, 0);
-        const percent = (spent / nextTrip.budget) * 100;
-        if (percent >= 80) {
-          replaceOrAddNotification(
-            {
-              type:   'rate',
-              tripId: nextTrip.id,
-              title:  `💰 Budget à ${Math.round(percent)}% — attention !`,
-              body:   `${Math.round(spent)} ${nextTrip.currency} sur ${nextTrip.budget} ${nextTrip.currency} pour ${label}.`,
-            },
-            'Budget à',
-          );
-        }
-      }
-
-      if (nextTrip.isRoadtrip && daysUntil <= 14 && (nextTrip.destinations?.length ?? 0) === 0) {
-        const alreadyRoadtrip = notifications.some(
-          (n) => n.tripId === nextTrip.id && n.type === 'tip' && n.title.includes('sans étapes'),
-        );
-        if (!alreadyRoadtrip) {
-          addNotification({
-            type:   'tip',
-            tripId: nextTrip.id,
-            title:  '🗺️ Roadtrip sans étapes définies',
-            body:   `Votre roadtrip en ${nextTrip.country} n'a pas d'étapes. Ajoutez vos villes !`,
-          });
-        }
-      }
-    }
-
-    if (status === 'ongoing') {
-      const totalDays = daysBetween(nextTrip.startDate, nextTrip.endDate);
-      const elapsed   = daysBetween(nextTrip.startDate, new Date().toISOString().slice(0, 10));
-      const dayIndex  = Math.min(elapsed, totalDays);
-
-      replaceOrAddNotification(
-        {
-          type:   'tip',
-          tripId: nextTrip.id,
-          title:  `🌍 Jour ${dayIndex}/${totalDays} — Bon voyage !`,
-          body:   `Profitez de votre ${nextTrip.isRoadtrip ? `roadtrip en ${nextTrip.country}` : `séjour à ${nextTrip.destination}`}. N'oubliez pas de noter vos dépenses !`,
-        },
-        'Jour',
-      );
-
-      if (nextTrip.budget > 0) {
-        const spent   = nextTrip.expenses.reduce((s, e) => s + e.amount, 0);
-        const percent = (spent / nextTrip.budget) * 100;
-        if (percent >= 80) {
-          replaceOrAddNotification(
-            {
-              type:   'rate',
-              tripId: nextTrip.id,
-              title:  `💰 Budget à ${Math.round(percent)}% consommé`,
-              body:   `${Math.round(spent)} ${nextTrip.currency} sur ${nextTrip.budget} ${nextTrip.currency}. Attention !`,
-            },
-            'Budget à',
-          );
-        }
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trips.length]);
+    });
+  }, [trips, notificationsEnabled, notifDisabledTrips, addNotification, replaceOrAddNotification]);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,19 +365,21 @@ const NotifIcon = ({ type }: { type: AppNotification['type'] }) => {
     AppNotification['type'],
     { icon: React.ElementType; color: string; bg: string }
   > = {
-    countdown: { icon: Plane,      color: '#7c8cff', bg: 'rgba(124,140,255,0.15)' },
-    checklist: { icon: CheckCheck, color: '#56c5a4', bg: 'rgba(86,197,164,0.15)'  },
-    rate:      { icon: Wallet,     color: '#f0b24a', bg: 'rgba(240,178,74,0.15)'  },
-    tip:       { icon: Lightbulb,  color: '#ec4899', bg: 'rgba(236,72,153,0.15)'  },
+    countdown: { icon: Plane,      color: '#7c8cff', bg: 'rgba(124,140,255,0.12)' },
+    checklist: { icon: CheckCheck, color: '#56c5a4', bg: 'rgba(86,197,164,0.12)'  },
+    documents: { icon: FileText,   color: '#60a5fa', bg: 'rgba(96,165,250,0.12)'  },
+    weather:   { icon: Cloud,      color: '#38bdf8', bg: 'rgba(56,189,248,0.12)'  },
+    rate:      { icon: Wallet,     color: '#f0b24a', bg: 'rgba(240,178,74,0.12)'  },
+    tip:       { icon: Lightbulb,  color: '#ec4899', bg: 'rgba(236,72,153,0.12)'  },
   };
   const cfg  = configs[type];
   const Icon = cfg.icon;
   return (
     <div
-      className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-      style={{ background: cfg.bg }}
+      className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+      style={{ background: cfg.bg, border: `1px solid ${cfg.color}24` }}
     >
-      <Icon size={16} style={{ color: cfg.color }} />
+      <Icon size={14} style={{ color: cfg.color }} />
     </div>
   );
 };
@@ -371,6 +459,7 @@ const NotifCard = ({
 
   const priority = getNotifPriority(notif);
   const prioCfg  = PRIORITY_CONFIG[priority];
+  const meta     = NOTIF_META[notif.type];
 
   const hasAgenda = !!(
     (notif.type === 'countdown' || notif.type === 'tip') &&
@@ -379,8 +468,10 @@ const NotifCard = ({
 
   // ✅ FIX — Routes correctes selon App.tsx
   const getNavigationSection = (): string => {
-    if (notif.type === 'checklist') return 'essentials'; // ← était 'checklist'
-    if (notif.type === 'rate')      return 'budget';     // ← était 'expenses'
+    if (notif.type === 'checklist') return 'essentials';
+    if (notif.type === 'documents') return 'documents';
+    if (notif.type === 'weather')   return 'weather';
+    if (notif.type === 'rate')      return 'budget';
     if (notif.type === 'tip')       return 'overview';
     return 'overview';
   };
@@ -393,7 +484,7 @@ const NotifCard = ({
         title:     `✈️ ${notif.tripName}`,
         startDate: notif.startDate,
         endDate:   notif.endDate,
-        details:   `Voyage planifié avec MyTrip\n${notif.body}`,
+        details:   `Voyage planifié avec My Plan’Air\n${notif.body}`,
       }),
       '_blank',
       'noopener,noreferrer',
@@ -410,7 +501,7 @@ const NotifCard = ({
       title:     `✈️ ${notif.tripName}`,
       startDate: notif.startDate,
       endDate:   notif.endDate,
-      details:   `Voyage planifié avec MyTrip\n${notif.body}`,
+      details:   `Voyage planifié avec My Plan’Air\n${notif.body}`,
     });
     setAgendaOpen(false);
     onRead(notif.id);
@@ -427,11 +518,12 @@ const NotifCard = ({
       className="rounded-2xl overflow-hidden relative"
       style={{
         background: notif.read
-          ? 'rgba(255,255,255,0.03)'
-          : 'rgba(124,140,255,0.06)',
+          ? 'rgba(255,255,255,0.032)'
+          : 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.035))',
         border: notif.read
-          ? '1px solid rgba(255,255,255,0.06)'
-          : '1px solid rgba(124,140,255,0.2)',
+          ? '1px solid rgba(255,255,255,0.065)'
+          : `1px solid ${meta.color}26`,
+        boxShadow: notif.read ? 'none' : `0 14px 40px ${meta.color}10`,
       }}
     >
       <button
@@ -452,9 +544,13 @@ const NotifCard = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2">
             <div className="flex-1 min-w-0">
-              {!notif.read && priority !== 'info' && (
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: meta.color }}>
+                  {meta.family}
+                </span>
+                {!notif.read && priority !== 'info' && (
                 <div
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full mb-1.5"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
                   style={{
                     background: prioCfg.bg,
                     border:     `1px solid ${prioCfg.color}40`,
@@ -471,7 +567,8 @@ const NotifCard = ({
                     {prioCfg.label}
                   </span>
                 </div>
-              )}
+                )}
+              </div>
               <div
                 className="font-semibold text-sm tracking-tight leading-tight"
                 style={{ color: notif.read ? 'rgba(255,255,255,0.65)' : 'white' }}
@@ -505,11 +602,7 @@ const NotifCard = ({
                   color:      '#a5b4fc',
                 }}
               >
-                {notif.type === 'checklist'
-                  ? 'Voir la checklist'
-                  : notif.type === 'rate'
-                    ? 'Voir le budget'
-                    : 'Voir le voyage'}
+                {NOTIF_META[notif.type].action}
                 <ChevronRight size={11} />
               </button>
             )}
@@ -559,10 +652,10 @@ const NotifCard = ({
               style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
             >
               <p className="text-xs font-semibold text-white/60 mb-1">
-                📅 Ajouter «{notif.tripName}» à votre agenda
+                📅 Ajouter «{notif.tripName}» à ton agenda
               </p>
               <p className="text-[11px] text-white/30 mb-3 leading-relaxed">
-                Le voyage sera ajouté aux dates prévues dans votre calendrier.
+                Le voyage sera ajouté aux dates prévues dans ton calendrier.
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -674,7 +767,7 @@ export const NotificationCenter = ({
       onClose();
       if (!tripId) return;
       // Routes valides selon App.tsx
-      const validSections = ['overview', 'parcours', 'budget', 'essentials', 'chat'];
+      const validSections = ['overview', 'parcours', 'budget', 'essentials', 'chat', 'documents', 'weather'];
       const target = section && validSections.includes(section) ? section : 'overview';
       setTimeout(() => navigate(`/trip/${tripId}/${target}`), 220);
     },
@@ -988,7 +1081,7 @@ export const BellWithBadge = ({ onClick }: { onClick: () => void }) => {
     <motion.button
       whileTap={{ scale: 0.9 }}
       onClick={onClick}
-      className="w-11 h-11 glass rounded-full flex items-center justify-center tap relative"
+      className="w-10 h-10 glass rounded-full flex items-center justify-center tap relative"
       aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
     >
       <Bell size={18} />

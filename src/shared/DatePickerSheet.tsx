@@ -1,5 +1,5 @@
 // src/shared/DatePickerSheet.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, X, Calendar } from 'lucide-react';
 
@@ -36,7 +36,10 @@ const isoCompare = (a: string, b: string): number => {
   return 0;
 };
 
-const todayISO = (): string => new Date().toISOString().slice(0, 10);
+const todayISO = (): string => {
+  const date = new Date();
+  return toISO(date.getFullYear(), date.getMonth() + 1, date.getDate());
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DateTrigger
@@ -47,22 +50,36 @@ export const DateTrigger = ({
   placeholder = 'Choisir une date',
   onClick,
   disabled = false,
+  variant = 'default',
 }: {
   value:        string;
   label?:       string;
   placeholder?: string;
   onClick:      () => void;
   disabled?:    boolean;
+  variant?:     'default' | 'compact';
 }) => {
   const parsed = parseISO(value);
-  const display = parsed
-    ? new Date(value + 'T12:00:00').toLocaleDateString('fr-FR', {
+  const date = parsed ? new Date(value + 'T12:00:00') : null;
+  const compactDate = date
+    ? date.toLocaleDateString('fr-FR', {
+        day:   'numeric',
+        month: 'short',
+        year:  'numeric',
+      }).replace('.', '')
+    : placeholder;
+  const isToday = value === todayISO();
+  const defaultDisplay = date
+    ? date.toLocaleDateString('fr-FR', {
         weekday: 'long',
         day:     'numeric',
         month:   'long',
         year:    'numeric',
       })
     : placeholder;
+  const display = variant === 'compact'
+    ? (isToday ? 'Aujourd’hui' : compactDate)
+    : defaultDisplay;
 
   return (
     <div className="block w-full">
@@ -76,28 +93,35 @@ export const DateTrigger = ({
         whileTap={{ scale: disabled ? 1 : 0.98 }}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
-        className="w-full glass-strong rounded-2xl px-5 py-4 flex items-center gap-4 text-left tap transition-all"
+        className={`w-full glass-strong rounded-2xl flex items-center text-left tap transition-all ${
+          variant === 'compact' ? 'px-3.5 py-3 gap-3' : 'px-5 py-4 gap-4'
+        }`}
         style={{
           opacity: disabled ? 0.4 : 1,
           cursor:  disabled ? 'not-allowed' : 'pointer',
         }}
       >
         <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+          className={`${variant === 'compact' ? 'w-8 h-8' : 'w-9 h-9'} rounded-xl flex items-center justify-center flex-shrink-0`}
           style={{ background: 'rgba(124,140,255,0.15)', border: '1px solid rgba(124,140,255,0.25)' }}
         >
-          <Calendar size={16} style={{ color: '#7c8cff' }} />
+          <Calendar size={variant === 'compact' ? 14 : 16} style={{ color: '#7c8cff' }} />
         </div>
         <div className="flex-1 min-w-0">
           <div
-            className="text-base font-semibold tracking-tight truncate capitalize"
+            className={`${variant === 'compact' ? 'text-sm' : 'text-base'} font-semibold tracking-tight truncate capitalize`}
             style={{ color: parsed ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.3)' }}
           >
             {display}
           </div>
-          {parsed && (
+          {parsed && variant === 'default' && (
             <div className="text-xs text-white/35 mt-0.5">
               {value}
+            </div>
+          )}
+          {parsed && variant === 'compact' && isToday && (
+            <div className="text-[11px] text-white/35 mt-0.5">
+              {compactDate}
             </div>
           )}
         </div>
@@ -127,8 +151,42 @@ export const DatePickerSheet = ({
   max?:     string;
   title?:   string;
 }) => {
-  const [viewYear,  setViewYear]  = useState<number>(0);
-  const [viewMonth, setViewMonth] = useState<number>(0);
+  const initialView = parseISO(value) ?? parseISO(todayISO())!;
+  const [viewYear,  setViewYear]  = useState<number>(initialView.year);
+  const [viewMonth, setViewMonth] = useState<number>(initialView.month);
+  const titleId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusTimer = window.setTimeout(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    }, 0);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onCloseRef.current();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', handleKeyDown, true);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -156,6 +214,9 @@ export const DatePickerSheet = ({
     });
   };
 
+  const prevYear = () => setViewYear((y) => y - 1);
+  const nextYearFast = () => setViewYear((y) => y + 1);
+
   const selectDay = (day: number) => {
     const iso = toISO(viewYear, viewMonth, day);
     if (min && isoCompare(iso, min) < 0) return;
@@ -169,22 +230,21 @@ export const DatePickerSheet = ({
   const today       = todayISO();
   const parsedValue = parseISO(value);
 
-  // ✅ FIX P4 — prevISO supprimé (jamais utilisé dans le rendu)
-  // canPrev calculé directement sans variable intermédiaire inutile
-  const canPrev = !min || isoCompare(
-    toISO(viewYear, viewMonth, 1),
-    toISO(
-      viewMonth === 1 ? viewYear - 1 : viewYear,
-      viewMonth === 1 ? 12 : viewMonth - 1,
-      1,
-    ).slice(0, 8) + '01',
-  ) > 0;
+  const previousYear = viewMonth === 1 ? viewYear - 1 : viewYear;
+  const previousMonth = viewMonth === 1 ? 12 : viewMonth - 1;
+  const previousMonthLastDay = daysInMonth(previousYear, previousMonth);
+  const previousMonthLastISO = toISO(previousYear, previousMonth, previousMonthLastDay);
+  const canPrev = !min || isoCompare(previousMonthLastISO, min) >= 0;
 
-  const canNext = !max || isoCompare(toISO(
-    viewMonth === 12 ? viewYear + 1 : viewYear,
-    viewMonth === 12 ? 1 : viewMonth + 1,
-    1,
-  ), max) <= 0;
+  const nextYear = viewMonth === 12 ? viewYear + 1 : viewYear;
+  const nextMonthValue = viewMonth === 12 ? 1 : viewMonth + 1;
+  const nextMonthFirstISO = toISO(nextYear, nextMonthValue, 1);
+  const canNext = !max || isoCompare(nextMonthFirstISO, max) <= 0;
+
+  const previousYearSameMonthLastISO = toISO(viewYear - 1, viewMonth, daysInMonth(viewYear - 1, viewMonth));
+  const nextYearSameMonthFirstISO = toISO(viewYear + 1, viewMonth, 1);
+  const canPrevYear = !min || isoCompare(previousYearSameMonthLastISO, min) >= 0;
+  const canNextYear = !max || isoCompare(nextYearSameMonthFirstISO, max) <= 0;
 
   const cells: (number | null)[] = [
     ...Array(startOffset).fill(null),
@@ -205,8 +265,11 @@ export const DatePickerSheet = ({
           <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" />
 
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
             className="relative w-full rounded-t-[28px] sm:rounded-[28px] overflow-hidden pb-safe"
-            style={{
+            style={{ 
               maxWidth:       '420px',
               background:     'rgba(14,14,20,0.96)',
               border:         '1px solid rgba(255,255,255,0.1)',
@@ -227,8 +290,9 @@ export const DatePickerSheet = ({
               className="flex items-center justify-between px-5 py-4"
               style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
             >
-              <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+              <h3 id={titleId} className="text-base font-semibold tracking-tight">{title}</h3>
               <button
+                ref={closeButtonRef}
                 onClick={onClose}
                 className="w-9 h-9 rounded-full flex items-center justify-center tap"
                 style={{ background: 'rgba(255,255,255,0.08)' }}
@@ -259,12 +323,40 @@ export const DatePickerSheet = ({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 8 }}
                   transition={{ duration: 0.18 }}
-                  className="text-center"
+                  className="text-center min-w-[128px]"
                 >
-                  <div className="text-lg font-bold tracking-tight capitalize">
+                  <div className="text-lg font-bold tracking-tight capitalize leading-tight">
                     {MONTHS_FR[viewMonth - 1]}
                   </div>
-                  <div className="text-xs text-white/40">{viewYear}</div>
+                  <div className="mt-1 flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={canPrevYear ? prevYear : undefined}
+                      disabled={!canPrevYear}
+                      className="w-6 h-6 rounded-full flex items-center justify-center tap"
+                      style={{
+                        background: canPrevYear ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.025)',
+                        color:      canPrevYear ? 'rgba(255,255,255,0.50)' : 'rgba(255,255,255,0.16)',
+                      }}
+                      aria-label="Année précédente"
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                    <div className="text-xs font-semibold text-white/42 min-w-[42px]">{viewYear}</div>
+                    <button
+                      type="button"
+                      onClick={canNextYear ? nextYearFast : undefined}
+                      disabled={!canNextYear}
+                      className="w-6 h-6 rounded-full flex items-center justify-center tap"
+                      style={{
+                        background: canNextYear ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.025)',
+                        color:      canNextYear ? 'rgba(255,255,255,0.50)' : 'rgba(255,255,255,0.16)',
+                      }}
+                      aria-label="Année suivante"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  </div>
                 </motion.div>
               </AnimatePresence>
 

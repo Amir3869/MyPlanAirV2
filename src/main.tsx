@@ -12,8 +12,8 @@ import L from 'leaflet';
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,17 +21,34 @@ L.Icon.Default.mergeOptions({
 // ─────────────────────────────────────────────────────────────────────────────
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;
 
+// ✅ Graceful fallback : si la clé Clerk est manquante, on affiche l'app
+// sans Clerk (mode local) au lieu de crasher complètement.
 if (!CLERK_KEY) {
-  throw new Error('❌ VITE_CLERK_PUBLISHABLE_KEY manquante dans .env.local');
+  console.warn(
+    '⚠️ VITE_CLERK_PUBLISHABLE_KEY manquante dans .env.local — mode sans auth'
+  );
 }
 
-createRoot(document.getElementById('root')!).render(
+// ─────────────────────────────────────────────────────────────────────────────
+// Si la clé Clerk existe → on enveloppe avec ClerkProvider
+// Sinon → on affiche l'app sans auth (fallback gracieux)
+// ─────────────────────────────────────────────────────────────────────────────
+const RootApp = () => (
   <StrictMode>
-    {/* ✅ ClerkProvider enveloppe toute l'app */}
-    <ClerkProvider publishableKey={CLERK_KEY}>
-      <ToastProvider>
-        <App />
-      </ToastProvider>
-    </ClerkProvider>
+    <ToastProvider>
+      <App />
+    </ToastProvider>
   </StrictMode>
 );
+
+const root = createRoot(document.getElementById('root')!);
+
+if (CLERK_KEY) {
+  root.render(
+    <ClerkProvider publishableKey={CLERK_KEY}>
+      <RootApp />
+    </ClerkProvider>
+  );
+} else {
+  root.render(<RootApp />);
+}

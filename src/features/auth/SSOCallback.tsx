@@ -56,7 +56,7 @@ export const SSOCallback = () => {
             className="text-sm mt-1"
             style={{ color: 'rgba(255,255,255,0.4)' }}
           >
-            Finalisation de votre authentification
+            Finalisation de ton authentification
           </p>
         </div>
 

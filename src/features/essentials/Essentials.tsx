@@ -105,6 +105,32 @@ const SUGGESTION_CATEGORIES: Category[] = [
   },
 ];
 
+const normalizeChecklistLabel = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const NOTE_SHORTCUTS = [
+  { key: 'address',     label: 'Adresse',     emoji: '📍', color: '#7c8cff', text: '📍 Adresse :' },
+  { key: 'booking',     label: 'Réservation', emoji: '🎫', color: '#f0b24a', text: `🎫 Réservation
+Nom :
+Date / heure :
+Référence :` },
+  { key: 'transport',   label: 'Transport',   emoji: '🚆', color: '#56c5a4', text: `🚆 Transport
+Départ :
+Arrivée :
+Heure :` },
+  { key: 'try',         label: 'À tester',    emoji: '⭐', color: '#ec4899', text: '⭐ À tester :' },
+  { key: 'important',   label: 'Important',   emoji: '⚠️', color: '#ff6b35', text: '⚠️ Important :' },
+  { key: 'contact',     label: 'Contact',     emoji: '👤', color: '#a78bfa', text: `👤 Contact
+Nom :
+Téléphone :
+Note :` },
+] as const;
+
 export const Essentials = () => {
   const { trip }      = useTripContext();
   const [tab, setTab] = useState<Tab>('checklist');
@@ -113,11 +139,11 @@ export const Essentials = () => {
   const addItem         = useTripStore((s) => s.addChecklistItem);
   const removeItem      = useTripStore((s) => s.removeChecklistItem);
   const setNotes        = useTripStore((s) => s.setNotes);
-  const { success }     = useToast();
+  const { success, info } = useToast();
 
   const [newItem,        setNewItem]        = useState('');
   const [suggestOpen,    setSuggestOpen]    = useState(false);
-  const [activeCategory, setActiveCategory] = useState<string | null>('docs');
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const done  = trip.checklist.filter((c) => c.done).length;
   const total = trip.checklist.length;
@@ -126,24 +152,62 @@ export const Essentials = () => {
   const [draft,   setDraft]   = useState(trip.notes);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const timerRef = useRef<number | undefined>(undefined);
+  const pendingSaveRef = useRef<{
+    tripId: string;
+    draft: string;
+    savedNotes: string;
+  } | null>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current !== undefined) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+    }
+
+    const pending = pendingSaveRef.current;
+    if (pending && pending.draft !== pending.savedNotes) {
+      setNotes(pending.tripId, pending.draft);
+    }
+    pendingSaveRef.current = null;
+  }, [trip.id, setNotes]);
 
   useEffect(() => {
     setDraft(trip.notes);
+    setSavedAt(null);
+    pendingSaveRef.current = null;
   }, [trip.id]); // eslint-disable-line
 
   useEffect(() => {
-    if (draft === trip.notes) return;
+    if (draft === trip.notes) {
+      pendingSaveRef.current = null;
+      return;
+    }
+
     if (timerRef.current !== undefined) {
       window.clearTimeout(timerRef.current);
     }
+
+    pendingSaveRef.current = {
+      tripId: trip.id,
+      draft,
+      savedNotes: trip.notes,
+    };
+
     timerRef.current = window.setTimeout(() => {
-      setNotes(trip.id, draft);
-      setSavedAt(new Date());
+      const pending = pendingSaveRef.current;
+      if (pending && pending.draft !== pending.savedNotes) {
+        setNotes(pending.tripId, pending.draft);
+        setSavedAt(new Date());
+      }
+      pendingSaveRef.current = null;
       timerRef.current = undefined;
     }, 2000);
+
     return () => {
       if (timerRef.current !== undefined) {
         window.clearTimeout(timerRef.current);
+        timerRef.current = undefined;
       }
     };
   }, [draft, trip.id, trip.notes, setNotes]);
@@ -155,13 +219,13 @@ export const Essentials = () => {
 
   const addCategory = (cat: Category) => {
     const existing = new Set(
-      trip.checklist.map((c) => c.label.toLowerCase().trim()),
+      trip.checklist.map((c) => normalizeChecklistLabel(c.label)),
     );
     const toAdd = cat.items.filter(
-      (item) => !existing.has(item.toLowerCase().trim()),
+      (item) => !existing.has(normalizeChecklistLabel(item)),
     );
     if (toAdd.length === 0) {
-      success('Tous ces éléments sont déjà dans votre liste !');
+      info('Tous ces éléments sont déjà dans ta liste.');
       return;
     }
     toAdd.forEach((label) => addItem(trip.id, label));
@@ -170,13 +234,46 @@ export const Essentials = () => {
   };
 
   const existingLabels = new Set(
-    trip.checklist.map((c) => c.label.toLowerCase().trim()),
+    trip.checklist.map((c) => normalizeChecklistLabel(c.label)),
   );
 
   const getAvailableItems = (cat: Category) =>
     cat.items.filter(
-      (item) => !existingLabels.has(item.toLowerCase().trim()),
+      (item) => !existingLabels.has(normalizeChecklistLabel(item)),
     );
+
+  const addManualItem = () => {
+    const label = newItem.trim();
+    if (!label) return;
+
+    if (existingLabels.has(normalizeChecklistLabel(label))) {
+      haptic(4);
+      info('Déjà dans ta checklist.');
+      return;
+    }
+
+    haptic([5, 20, 5]);
+    addItem(trip.id, label);
+    setNewItem('');
+    success('Ajouté à la checklist');
+  };
+
+  const insertNoteShortcut = (text: string) => {
+    haptic(4);
+    const current = draft;
+    const separator = current.trim().length > 0 ? '\n\n' : '';
+    const next = `${current}${separator}${text}`;
+    setDraft(next);
+
+    // Ne force pas le focus : sur mobile, cela ouvrait le clavier automatiquement.
+    // L’utilisateur peut toucher la zone de note s’il veut continuer à écrire.
+    window.setTimeout(() => {
+      const el = notesRef.current;
+      if (!el || document.activeElement !== el) return;
+      const position = next.length;
+      el.setSelectionRange(position, position);
+    }, 0);
+  };
 
   return (
     <motion.div
@@ -256,7 +353,10 @@ export const Essentials = () => {
 
             {/* Bouton suggestions */}
             <button
-              onClick={() => setSuggestOpen(!suggestOpen)}
+              onClick={() => {
+                setSuggestOpen((open) => !open);
+                setActiveCategory(null);
+              }}
               className="w-full glass rounded-2xl px-4 py-3 flex items-center gap-3 tap transition"
               style={{
                 background: suggestOpen
@@ -302,30 +402,35 @@ export const Essentials = () => {
                             border:     '1px solid rgba(255,255,255,0.08)',
                           }}
                         >
-                          <button
-                            onClick={() =>
-                              setActiveCategory(isActive ? null : cat.key)
-                            }
-                            className="w-full flex items-center gap-3 px-4 py-3 tap"
-                          >
-                            <span className="text-lg">{cat.emoji}</span>
-                            <span
-                              className="flex-1 text-left font-semibold text-sm"
-                              style={{ color: cat.color }}
+                          <div className="w-full flex items-center gap-2 px-4 py-3">
+                            <button
+                              onClick={() =>
+                                setActiveCategory(isActive ? null : cat.key)
+                              }
+                              className="min-w-0 flex-1 flex items-center gap-3 tap text-left"
+                              aria-expanded={isActive}
                             >
-                              {cat.label}
-                            </span>
-                            <span className="text-xs text-white/40 mr-2">
-                              {available.length} disponible
-                              {available.length !== 1 ? 's' : ''}
-                            </span>
+                              <span className="text-lg flex-shrink-0">{cat.emoji}</span>
+                              <span
+                                className="flex-1 min-w-0 font-semibold text-sm truncate"
+                                style={{ color: cat.color }}
+                              >
+                                {cat.label}
+                              </span>
+                              <span className="text-xs text-white/40 flex-shrink-0">
+                                {available.length} disponible
+                                {available.length !== 1 ? 's' : ''}
+                              </span>
+                              {isActive ? (
+                                <ChevronUp size={14} className="text-white/40 flex-shrink-0" />
+                              ) : (
+                                <ChevronDown size={14} className="text-white/40 flex-shrink-0" />
+                              )}
+                            </button>
                             {available.length > 0 && (
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  addCategory(cat);
-                                }}
-                                className="text-xs font-semibold px-2.5 py-1 rounded-full tap mr-1"
+                                onClick={() => addCategory(cat)}
+                                className="text-xs font-semibold px-2.5 py-1 rounded-full tap flex-shrink-0"
                                 style={{
                                   background: `${cat.color}20`,
                                   color:      cat.color,
@@ -335,12 +440,7 @@ export const Essentials = () => {
                                 + Tout
                               </button>
                             )}
-                            {isActive ? (
-                              <ChevronUp size={14} className="text-white/40" />
-                            ) : (
-                              <ChevronDown size={14} className="text-white/40" />
-                            )}
-                          </button>
+                          </div>
 
                           <AnimatePresence>
                             {isActive && (
@@ -354,7 +454,7 @@ export const Essentials = () => {
                                 <div className="px-3 pb-3 space-y-1">
                                   {cat.items.map((item) => {
                                     const alreadyAdded = existingLabels.has(
-                                      item.toLowerCase().trim(),
+                                      normalizeChecklistLabel(item),
                                     );
                                     return (
                                       <div
@@ -412,21 +512,15 @@ export const Essentials = () => {
                 value={newItem}
                 onChange={(e) => setNewItem(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newItem.trim()) {
-                    addItem(trip.id, newItem.trim());
-                    setNewItem('');
+                  if (e.key === 'Enter') {
+                    addManualItem();
                   }
                 }}
                 placeholder="Ajouter un élément..."
                 className="flex-1 glass rounded-xl px-4 py-3 bg-transparent outline-none font-medium text-sm"
               />
               <button
-                onClick={() => {
-                  if (newItem.trim()) {
-                    addItem(trip.id, newItem.trim());
-                    setNewItem('');
-                  }
-                }}
+                onClick={addManualItem}
                 className="w-12 h-12 rounded-xl flex items-center justify-center tap text-white"
                 style={{
                   // ✅ CSS variables thème
@@ -486,9 +580,9 @@ export const Essentials = () => {
 
               {trip.checklist.length === 0 && (
                 <div className="text-center py-8 text-white/35 text-sm">
-                  Votre liste est vide.
+                  Ta liste est vide.
                   <br />
-                  Ajoutez des éléments ou utilisez les suggestions.
+                  Ajoute des éléments ou utilise les suggestions.
                 </div>
               )}
             </div>
@@ -503,15 +597,64 @@ export const Essentials = () => {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -10 }}
             transition={{ duration: 0.2 }}
+            className="space-y-3"
           >
-            <div className="paper p-6 min-h-[60vh] relative">
+            <GlassCard className="p-4">
+              <div className="flex items-center gap-2 mb-3 px-1">
+                <Sparkles size={13} style={{ color: 'var(--accent-label)' }} />
+                <div className="text-[10px] uppercase tracking-wider text-white/55 flex-1">
+                  Raccourcis
+                </div>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto -mx-1 px-1 pb-1">
+                {NOTE_SHORTCUTS.map((shortcut) => (
+                  <button
+                    key={shortcut.key}
+                    type="button"
+                    onClick={() => insertNoteShortcut(shortcut.text)}
+                    className="h-9 px-3.5 rounded-full text-xs font-semibold whitespace-nowrap tap flex items-center gap-1.5"
+                    style={{
+                      background: `${shortcut.color}16`,
+                      border:     `1px solid ${shortcut.color}30`,
+                      color:      'rgba(255,255,255,0.78)',
+                    }}
+                  >
+                    <span>{shortcut.emoji}</span>
+                    {shortcut.label}
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
+
+            <div
+              className="relative rounded-[28px] p-5 min-h-[56vh] overflow-hidden"
+              style={{
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))',
+                border:     '1px solid rgba(255,255,255,0.12)',
+                boxShadow:  '0 22px 60px rgba(0,0,0,0.22)',
+                backdropFilter: 'blur(24px) saturate(170%)',
+              }}
+            >
+              <div
+                className="pointer-events-none absolute inset-x-5 top-0 h-px"
+                style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.20), transparent)' }}
+              />
               <textarea
+                ref={notesRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Notez vos pensées de voyage, réservations, souvenirs..."
-                className="w-full min-h-[55vh] bg-transparent outline-none resize-none font-serif-journal text-lg leading-[32px] placeholder-white/30"
+                placeholder="Écris ici tes adresses, rappels, idées et détails importants…"
+                className="w-full min-h-[50vh] pb-10 bg-transparent outline-none resize-none text-[16px] leading-7 text-white/88 placeholder-white/28 tracking-tight"
               />
-              <div className="absolute bottom-3 right-4 flex items-center gap-1.5 text-xs text-white/45">
+              <div
+                className="absolute bottom-3 right-4 flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-full"
+                style={{
+                  background: 'rgba(255,255,255,0.07)',
+                  border:     '1px solid rgba(255,255,255,0.10)',
+                  color:      'rgba(255,255,255,0.52)',
+                }}
+              >
                 <Save size={11} />
                 {savedAt
                   ? `Sauvegardé à ${savedAt.toLocaleTimeString('fr-FR', {
@@ -519,7 +662,7 @@ export const Essentials = () => {
                       minute: '2-digit',
                     })}`
                   : draft !== trip.notes
-                    ? 'Sauvegarde dans 2s...'
+                    ? 'Sauvegarde…'
                     : 'À jour'}
               </div>
             </div>

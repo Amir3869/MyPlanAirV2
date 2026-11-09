@@ -67,3 +67,16 @@ export const bgOpacityForTime = () => {
   if (h < 9 || h >= 18) return 0.55;
   return 0.7;
 };
+
+/** Pourcentage d'avancement d'un voyage (0-100), null si pas "ongoing" */
+export const getTripProgress = (startDate: string, endDate: string): number | null => {
+  const status = tripStatus(startDate, endDate);
+  if (status !== 'ongoing') return null;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+  const end = new Date(endDate); end.setHours(0, 0, 0, 0);
+  const total = end.getTime() - start.getTime();
+  if (total <= 0) return null;
+  const elapsed = now.getTime() - start.getTime();
+  return Math.min(100, Math.max(0, Math.round((elapsed / total) * 100)));
+};

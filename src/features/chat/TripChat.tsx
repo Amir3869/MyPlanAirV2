@@ -10,9 +10,11 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTrip, useTripStore, type ChatMessage } from '../../store/tripStore';
-import { fetchChat, clearChatCache, clearAssistantCache, type ChatPayload } from '../../api/cloud';
+import { fetchChat, clearChatCache, type ChatPayload } from '../../api/cloud';
 import { daysBetween, tripStatus } from '../../utils/dateHelpers';
 import { haptic } from '../../utils/haptic';
+import { haversineKm, formatDistance, walkMinutes, metroMinutes, geocodePlace } from '../../utils/geo';
+import { isIOS } from '../../utils/platform';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GUARD ANTI-DOUBLE MESSAGE — niveau module, survit au StrictMode
@@ -31,13 +33,6 @@ type PlaceInfo = {
 };
 
 type Chip = { emoji: string; label: string; question: string };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DÉTECTION PLATEFORME — iOS vs Android/autres pour le bouton Maps
-// ─────────────────────────────────────────────────────────────────────────────
-const isIOS = (): boolean =>
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ICÔNES LEAFLET CUSTOM
@@ -87,48 +82,8 @@ const createUserIcon = () =>
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HAVERSINE
+// GEOCODING — Utilise le helper partagé geo.ts
 // ─────────────────────────────────────────────────────────────────────────────
-const haversineKm = (
-  lat1: number, lon1: number,
-  lat2: number, lon2: number,
-): number => {
-  const R  = 6371;
-  const dL = ((lat2 - lat1) * Math.PI) / 180;
-  const dl = ((lon2 - lon1) * Math.PI) / 180;
-  const a  =
-    Math.sin(dL / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-    Math.cos((lat2 * Math.PI) / 180) *
-    Math.sin(dl / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-
-const formatDistance = (km: number): string =>
-  km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
-
-const walkMinutes  = (km: number): number => Math.round((km / 5) * 60);
-const metroMinutes = (km: number): number => Math.round((km / 30) * 60 + 5);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GEOCODING — Photon OSM
-// ─────────────────────────────────────────────────────────────────────────────
-const geocodePlace = async (
-  query: string,
-): Promise<{ lat: number; lon: number } | null> => {
-  try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1&lang=fr`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const feat = data?.features?.[0];
-    if (!feat) return null;
-    const [lon, lat] = feat.geometry.coordinates as [number, number];
-    return { lat, lon };
-  } catch {
-    return null;
-  }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FLY TO — animation fluide vers le lieu
@@ -164,8 +119,9 @@ const GeocodingFailToast = ({
       animate={{ opacity: 1, y: 0,  scale: 1    }}
       exit={{ opacity: 0,  y: 20, scale: 0.95   }}
       transition={{ type: 'spring', damping: 26, stiffness: 300 }}
-      className="fixed bottom-24 left-4 right-4 z-[210] rounded-2xl overflow-hidden"
+      className="fixed left-4 right-4 z-[210] rounded-2xl overflow-hidden"
       style={{
+        bottom: 'calc(env(safe-area-inset-bottom, 12px) + 108px)',
         background:     'rgba(20,20,32,0.97)',
         border:         '1px solid rgba(255,255,255,0.12)',
         backdropFilter: 'blur(32px)',
@@ -284,14 +240,23 @@ const PlaceMapModal = ({
   const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${place.query}`;
   const appleMapsUrl  = `https://maps.apple.com/?q=${place.query}&ll=${place.lat},${place.lon}`;
   const onDevice      = isIOS();
+  const distanceWarning = distance !== null && distance > 50
+    ? 'Ce lieu semble très éloigné. ARIA a peut-être proposé une adresse hors zone : vérifie avant d’y aller.'
+    : distance !== null && distance > 15
+    ? 'Ce lieu semble assez éloigné de toi. Vérifie le trajet avant d’y aller.'
+    : null;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-end justify-center"
-      style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)' }}
+      className="fixed inset-0 z-[200] flex items-end justify-center px-3"
+      style={{
+        background: 'rgba(0,0,0,0.7)',
+        backdropFilter: 'blur(12px)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 12px) + 58px)',
+      }}
       onClick={onClose}
     >
       <motion.div
@@ -301,7 +266,7 @@ const PlaceMapModal = ({
         transition={{ type: 'spring', damping: 30, stiffness: 320 }}
         className="w-full max-w-lg overflow-hidden"
         style={{
-          borderRadius:   '28px 28px 0 0',
+          borderRadius:   '28px',
           background:     'rgba(12,12,20,0.97)',
           border:         '1px solid rgba(255,255,255,0.1)',
           backdropFilter: 'blur(40px)',
@@ -379,6 +344,21 @@ const PlaceMapModal = ({
               <X size={16} className="text-white/70" />
             </button>
           </div>
+
+          {distanceWarning && (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3 rounded-2xl px-3 py-2 text-xs leading-relaxed"
+              style={{
+                background: 'rgba(240,178,74,0.12)',
+                border: '1px solid rgba(240,178,74,0.26)',
+                color: '#f0b24a',
+              }}
+            >
+              ⚠️ {distanceWarning}
+            </motion.div>
+          )}
 
           {distance !== null && (
             <motion.div
@@ -648,37 +628,90 @@ const buildChips = (
 // ─────────────────────────────────────────────────────────────────────────────
 // FALLBACK OFFLINE
 // ─────────────────────────────────────────────────────────────────────────────
+const getLocalQuestionContext = (question: string): { radiusKm: number; family: string } | null => {
+  const q = question.toLowerCase();
+
+  if (/(resto|restaurant|manger|déjeuner|dejeuner|dîner|diner|café|cafe|brunch|bar)/i.test(q)) {
+    return { radiusKm: 5, family: 'food/pratique' };
+  }
+
+  if (/(pharmacie|médecin|medecin|hôpital|hopital|urgence|atm|distributeur|retirer|argent|change)/i.test(q)) {
+    return { radiusKm: 5, family: 'pratique/urgence' };
+  }
+
+  if (/(visite|activité|activite|musée|musee|monument|marché|marche|site|voir|faire aujourd|que faire|ce soir)/i.test(q)) {
+    return { radiusKm: q.includes('ce soir') || q.includes('aujourd') ? 15 : 10, family: 'activité/visite' };
+  }
+
+  return null;
+};
+
+const buildChatLocationContext = (
+  question: string,
+  destination: string,
+  userPos: { lat: number; lon: number } | null,
+): ChatPayload['locationContext'] | undefined => {
+  const context = getLocalQuestionContext(question);
+  if (!context) return undefined;
+
+  if (userPos) {
+    return {
+      mode: 'gps',
+      label: 'Ma position actuelle',
+      lat: userPos.lat,
+      lon: userPos.lon,
+      radiusKm: context.radiusKm,
+      family: context.family,
+    };
+  }
+
+  return {
+    mode: 'city',
+    label: destination,
+    radiusKm: context.radiusKm,
+    family: context.family,
+  };
+};
+
 const buildOfflineFallback = (question: string, destination: string): string => {
   const q = question.toLowerCase();
   if (q.includes('resto') || q.includes('manger') || q.includes('restaurant')) {
-    return `📵 **Mode hors-ligne**\n\nSans connexion, je ne peux pas accéder aux restaurants pour ${destination}.\n\n💡 Consultez Google Maps → "Restaurants près de moi" ou TripAdvisor.\n\nReconnectez-vous pour des adresses précises !`;
+    return `📵 **ARIA est hors ligne**\n\nJe ne peux pas récupérer d’adresses précises pour ${destination} pour le moment.\n\nEn attendant, ouvre Google Maps et cherche **restaurants près de moi**. Je pourrai affiner les quartiers, prix et adresses dès que la connexion revient.`;
   }
   if (q.includes('transport') || q.includes('métro') || q.includes('bus')) {
-    return `📵 **Mode hors-ligne**\n\nPour les transports à ${destination}, utilisez Maps.me (fonctionne hors-ligne).`;
+    return `📵 **ARIA est hors ligne**\n\nJe ne peux pas vérifier les transports en temps réel pour ${destination}.\n\nGarde une app de carte hors-ligne sous la main, puis reconnecte-toi pour que je t’aide avec les trajets, tickets et options locales.`;
   }
-  return `📵 **Mode hors-ligne**\n\nJe suis ARIA, votre guide pour ${destination}. Reconnectez-vous pour que je puisse vous aider précisément !`;
+  return `📵 **ARIA est hors ligne**\n\nJe garde le fil de ton voyage à ${destination}, mais j’ai besoin d’une connexion pour te répondre avec des informations précises.\n\nRéessaie dans un instant : je pourrai reprendre à partir de ta dernière question.`;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARSE MESSAGE — Markdown + spans cliquables
 // ─────────────────────────────────────────────────────────────────────────────
+const escapeHtml = (value: string): string => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 const parseMessageContent = (text: string): string => {
   const lines = text.split('\n');
 
   const parsedLines = lines.map((line) => {
-    let result = line;
+    let result = escapeHtml(line);
 
     result = result.replace(
-      /📍\s*\*\*(.*?)\*\*\s*(?:[·\-,]\s*)?(.*?)$/g,
-      (_: string, name: string, rest: string) => {
-        const cleanName    = name.trim();
+      /📍\s*(?:\*\*(.*?)\*\*|([^·,\-—–]+))\s*(?:[·,\-—–]\s*)?(.*?)$/g,
+      (_: string, boldName: string | undefined, plainName: string | undefined, rest: string) => {
+        const cleanName    = (boldName || plainName || '').trim();
         const cleanAddress = rest.trim();
+        if (!cleanName) return _;
 
         return (
           `<span ` +
           `class="aria-place" ` +
-          `data-name="${cleanName.replace(/"/g, '&quot;')}" ` +
-          `data-address="${cleanAddress.replace(/"/g, '&quot;')}" ` +
+          `data-name="${cleanName}" ` +
+          `data-address="${cleanAddress}" ` +
           `style="` +
           `display:inline-flex;align-items:center;gap:4px;cursor:pointer;` +
           `background:linear-gradient(135deg,rgba(124,140,255,0.15),rgba(236,72,153,0.1));` +
@@ -896,14 +929,13 @@ export const TripChat = () => {
   const [input,         setInput]         = useState('');
   const [loading,       setLoading]       = useState(false);
   const [hasError,      setHasError]      = useState(false);
-  const [aiSource,      setAiSource]      = useState<'groq' | 'mistral' | null>(null);
   const [chipsOpen,     setChipsOpen]     = useState(chatHistory.length === 0);
+  const [clearConfirm,  setClearConfirm]  = useState(false);
 
   const [selectedPlace, setSelectedPlace] = useState<PlaceInfo | null>(null);
   const [failToast,     setFailToast]     = useState<{ name: string; query: string } | null>(null);
   const [userPos,       setUserPos]       = useState<{ lat: number; lon: number } | null>(null);
   const [geocoding,     setGeocoding]     = useState(false);
-  const [gpsRequested,  setGpsRequested]  = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
@@ -924,21 +956,37 @@ export const TripChat = () => {
       })()
     : 0;
 
-  useEffect(() => {
-    if (gpsRequested) return;
-    setGpsRequested(true);
-    if (!navigator.geolocation) return;
+  const requestUserPosition = useCallback(() => {
+    if (userPos || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => setUserPos({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
       () => { /* permission refusée → pas de distance */ },
       { timeout: 8000, maximumAge: 60000 },
     );
-  }, [gpsRequested]);
+  }, [userPos]);
+
+  const requestUserPositionOnce = useCallback((): Promise<{ lat: number; lon: number } | null> => {
+    if (userPos) return Promise.resolve(userPos);
+    if (!navigator.geolocation) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          setUserPos(coords);
+          resolve(coords);
+        },
+        () => resolve(null),
+        { timeout: 5000, maximumAge: 60000 },
+      );
+    });
+  }, [userPos]);
 
   const handlePlaceClick = useCallback(
     async (name: string, address: string) => {
       setFailToast(null);
       setGeocoding(true);
+      requestUserPosition();
       haptic([5, 30, 5]);
 
       try {
@@ -961,7 +1009,7 @@ export const TripChat = () => {
         setGeocoding(false);
       }
     },
-    [],
+    [requestUserPosition],
   );
 
   useEffect(() => {
@@ -999,9 +1047,10 @@ export const TripChat = () => {
   }, [chatHistory.length, loading]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, options: { appendUserMessage?: boolean } = {}) => {
       if (!trip || !text.trim() || loading) return;
 
+      const appendUserMessage = options.appendUserMessage ?? true;
       const userText = text.trim();
       setInput('');
       setHasError(false);
@@ -1009,11 +1058,17 @@ export const TripChat = () => {
       setFailToast(null);
       haptic([5, 20, 5]);
 
-      addChatMessage(trip.id, { role: 'user', content: userText });
+      if (appendUserMessage) {
+        addChatMessage(trip.id, { role: 'user', content: userText });
+      }
       setLoading(true);
 
       try {
         const days = daysBetween(trip.startDate, trip.endDate);
+        const localContext = getLocalQuestionContext(userText);
+        const preciseUserPos = localContext ? await requestUserPositionOnce() : userPos;
+        const destinationLabel = trip.isRoadtrip ? trip.country : trip.destination;
+        const locationContext = buildChatLocationContext(userText, destinationLabel, preciseUserPos);
 
         const historyForApi = chatHistory.slice(-8).map((m) => ({
           role:    m.role,
@@ -1032,13 +1087,13 @@ export const TripChat = () => {
             city:        d.city,
             countryCode: d.countryCode,
           })) ?? [],
+          locationContext,
           history: historyForApi,
         };
 
         const result = await fetchChat(payload, trip.id);
 
         if (result.ok && result.answer) {
-          setAiSource(result.source);
           addChatMessage(trip.id, { role: 'assistant', content: result.answer });
         } else {
           const offlineReply = buildOfflineFallback(
@@ -1059,21 +1114,26 @@ export const TripChat = () => {
         inputRef.current?.focus();
       }
     },
-    [trip, loading, chatHistory, addChatMessage],
+    [trip, loading, chatHistory, addChatMessage, requestUserPositionOnce, userPos],
   );
+
+  const retryLastMessage = useCallback(() => {
+    const last = [...chatHistory].reverse().find((m) => m.role === 'user');
+    if (!last) return;
+    sendMessage(last.content, { appendUserMessage: false });
+  }, [chatHistory, sendMessage]);
 
   const handleChipClick = (chip: Chip) => { sendMessage(chip.question); };
 
   const handleClear = () => {
     haptic([5, 20, 5]);
+    setClearConfirm(false);
     if (trip) {
       welcomeSentForTrips.delete(trip.id);
       clearChatHistory(trip.id);
       clearChatCache(trip.id);
-      clearAssistantCache();
       setChipsOpen(true);
       setHasError(false);
-      setAiSource(null);
       setFailToast(null);
       setSelectedPlace(null);
     }
@@ -1095,7 +1155,7 @@ export const TripChat = () => {
   const chips = buildChips(destination, trip.isRoadtrip ?? false, status, daysUntil);
 
   return (
-    <div className="fixed inset-0 flex flex-col" style={{ background: '#07070b' }}>
+    <div className="fixed inset-0 z-20 flex flex-col" style={{ background: '#07070b' }}>
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="aurora opacity-20" />
       </div>
@@ -1155,14 +1215,14 @@ export const TripChat = () => {
 
         <div className="flex-1 min-w-0">
           <div className="font-bold tracking-tight text-sm truncate">
-            ARIA — Guide {destination}
+            ARIA - Guide
           </div>
           <div className="text-[11px] text-white/40 flex items-center gap-1.5 flex-wrap">
             <div
               className="w-1.5 h-1.5 rounded-full flex-shrink-0"
               style={{ background: '#56c5a4' }}
             />
-            <span>{aiSource === 'mistral' ? 'Mistral AI (fallback)' : 'Groq LLaMA 3.3'}</span>
+            <span>Live</span>
             {userPos && (
               <>
                 <span className="text-white/20">·</span>
@@ -1196,7 +1256,10 @@ export const TripChat = () => {
           </button>
 
           <button
-            onClick={handleClear}
+            onClick={() => {
+              haptic(4);
+              setClearConfirm(true);
+            }}
             className="w-9 h-9 rounded-full glass flex items-center justify-center tap"
             aria-label="Effacer la conversation"
           >
@@ -1204,6 +1267,70 @@ export const TripChat = () => {
           </button>
         </div>
       </header>
+
+      <AnimatePresence>
+        {clearConfirm && (
+          <motion.div
+            className="fixed inset-0 z-[220] flex items-center justify-center px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setClearConfirm(false)}
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div
+              initial={{ y: 20, scale: 0.96, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 12, scale: 0.96, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              className="relative w-full max-w-sm rounded-[28px] overflow-hidden"
+              style={{
+                background: 'rgba(14,14,22,0.98)',
+                border: '1px solid rgba(255,255,255,0.10)',
+                backdropFilter: 'blur(40px)',
+                boxShadow: '0 24px 80px rgba(0,0,0,0.55)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-center pt-3 pb-2">
+                <div className="w-10 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }} />
+              </div>
+              <div className="px-5 pb-6 pt-2">
+                <div className="flex items-start gap-3 mb-5">
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(239,68,68,0.13)', border: '1px solid rgba(239,68,68,0.24)' }}
+                  >
+                    <Trash2 size={17} style={{ color: '#ef4444' }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold tracking-tight text-white/92">Effacer la conversation ?</div>
+                    <div className="text-sm text-white/55 leading-relaxed mt-1">
+                      L’historique ARIA de ce voyage sera supprimé de cet appareil.
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setClearConfirm(false)}
+                    className="h-12 rounded-2xl font-semibold text-sm tap"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.70)' }}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleClear}
+                    className="h-12 rounded-2xl font-semibold text-sm tap"
+                    style={{ background: 'rgba(239,68,68,0.16)', border: '1px solid rgba(239,68,68,0.30)', color: '#ef4444' }}
+                  >
+                    Effacer
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {chipsOpen && (
@@ -1219,13 +1346,29 @@ export const TripChat = () => {
             }}
           >
             <div className="px-4 py-3">
-              <div className="text-[11px] text-white/35 mb-2 uppercase tracking-wider">
-                {status === 'ongoing'
-                  ? '📍 En voyage — questions du moment'
-                  : status === 'upcoming' && daysUntil <= 3
-                    ? '⚡ Dernière minute'
-                    : 'Questions suggérées'}
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-[11px] text-white/35 uppercase tracking-wider">
+                  {status === 'ongoing'
+                    ? '📍 En voyage — questions du moment'
+                    : status === 'upcoming' && daysUntil <= 3
+                      ? '⚡ Dernière minute'
+                      : 'Questions suggérées'}
+                </div>
+                {!userPos && status === 'ongoing' && (
+                  <button
+                    onClick={requestUserPosition}
+                    className="text-[11px] font-semibold px-2.5 py-1 rounded-full tap"
+                    style={{ background: 'rgba(86,197,164,0.12)', border: '1px solid rgba(86,197,164,0.24)', color: '#56c5a4' }}
+                  >
+                    Activer position
+                  </button>
+                )}
               </div>
+              {!userPos && status === 'ongoing' && (
+                <div className="text-[11px] text-white/30 leading-relaxed mb-2">
+                  Pour des restos et activités plus proches, active ta position. Sinon ARIA reste sur la ville du voyage.
+                </div>
+              )}
               <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                 {chips.map((chip) => (
                   <button
@@ -1292,10 +1435,7 @@ export const TripChat = () => {
             <WifiOff size={14} style={{ color: '#ef4444' }} />
             <span className="text-xs text-red-400">Connexion requise</span>
             <button
-              onClick={() => {
-                const last = [...chatHistory].reverse().find((m) => m.role === 'user');
-                if (last) sendMessage(last.content);
-              }}
+              onClick={retryLastMessage}
               className="ml-auto tap"
               style={{ color: '#ef4444' }}
             >
@@ -1308,16 +1448,16 @@ export const TripChat = () => {
       </div>
 
       <div
-        className="relative z-10 flex-shrink-0 px-4 py-3"
+        className="relative z-40 flex-shrink-0 px-4 pt-3"
         style={{
-          paddingBottom:  'max(12px, env(safe-area-inset-bottom, 12px))',
-          background:     'rgba(7,7,11,0.9)',
+          paddingBottom:  'calc(env(safe-area-inset-bottom, 12px) + 112px)',
+          background:     'linear-gradient(180deg, rgba(7,7,11,0.82), rgba(7,7,11,0.96))',
           backdropFilter: 'blur(24px)',
           borderTop:      '1px solid rgba(255,255,255,0.07)',
         }}
       >
         <div
-          className="flex items-end gap-2 rounded-2xl px-4 py-3"
+          className="flex items-center gap-2 rounded-2xl px-4 py-3"
           style={{
             background: 'rgba(255,255,255,0.05)',
             border:     '1px solid rgba(255,255,255,0.1)',
@@ -1346,8 +1486,11 @@ export const TripChat = () => {
             disabled={loading}
             className="flex-1 bg-transparent outline-none resize-none text-sm font-medium placeholder-white/25"
             style={{
+              minHeight:  24,
               maxHeight:  120,
-              lineHeight: '1.5',
+              lineHeight: '24px',
+              paddingTop: 0,
+              paddingBottom: 0,
               color:      'rgba(255,255,255,0.9)',
             }}
           />
@@ -1380,7 +1523,7 @@ export const TripChat = () => {
 
         <div className="flex items-center justify-center gap-2 mt-2">
           <p className="text-[10px] text-white/20">
-            {aiSource === 'mistral' ? 'Mistral AI' : 'Groq LLaMA 3.3 70B'} ·{' '}
+            ARIA Live ·{' '}
           </p>
           <div className="flex items-center gap-1">
             <MapPin size={9} style={{ color: 'rgba(165,180,252,0.4)' }} />

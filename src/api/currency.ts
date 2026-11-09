@@ -1,6 +1,8 @@
 // src/api/currency.ts
 // Taux de change — Via Cloudflare Worker (proxy Frankfurter) + fallback offline
 
+import { recordLocalUsage, recordWorkerUsage, type WorkerUsageMeta } from '../utils/usageTelemetry';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // URL du Worker (même base que cloud.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +51,14 @@ export type RateResult = {
   updatedAt: string;
 };
 
+type CurrencyWorkerResponse = {
+  ok: boolean;
+  rate?: number;
+  source?: string;
+  error?: string;
+  usage?: WorkerUsageMeta;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache mémoire — TTL 15 minutes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +81,14 @@ const getCacheKey = (from: string, to: string): string => `${from}_${to}`;
 // ─────────────────────────────────────────────────────────────────────────────
 export const fetchRate = async (from: string, to: string): Promise<RateResult> => {
   if (from === to) {
+    recordLocalUsage({
+      service: 'currency',
+      category: 'local',
+      endpoint: '/currency',
+      method: 'GET',
+      status: 'cache',
+      details: { reason: 'same_currency', from, to },
+    });
     return { rate: 1, source: 'live', updatedAt: new Date().toISOString() };
   }
 
@@ -79,6 +97,14 @@ export const fetchRate = async (from: string, to: string): Promise<RateResult> =
   // ── Cache mémoire ─────────────────────────────────────────────────────────
   const cached = rateCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    recordLocalUsage({
+      service: 'currency',
+      category: 'local',
+      endpoint: '/currency',
+      method: 'GET',
+      status: 'cache',
+      details: { from, to, cacheKey },
+    });
     return {
       rate:      cached.rate,
       source:    'live',
@@ -93,21 +119,36 @@ export const fetchRate = async (from: string, to: string): Promise<RateResult> =
       signal: AbortSignal.timeout(8000),
     });
 
-    if (res.ok) {
-      const data = await res.json() as { ok: boolean; rate?: number; source?: string };
+    const data = await res.json().catch(() => null) as CurrencyWorkerResponse | null;
+    recordWorkerUsage(data?.usage, {
+      service: 'currency',
+      endpoint: '/currency',
+      method: 'GET',
+      status: res.ok && data?.ok ? 'success' : 'fallback',
+      errorReason: res.ok ? data?.error : `http_${res.status}`,
+      details: { from, to },
+    });
 
-      if (data.ok && typeof data.rate === 'number' && data.rate > 0) {
-        // ✅ Succès — mise en cache
-        rateCache.set(cacheKey, { rate: data.rate, ts: Date.now() });
-        return {
-          rate:      data.rate,
-          source:    'live',
-          updatedAt: new Date().toISOString(),
-        };
-      }
+    if (res.ok && data?.ok && typeof data.rate === 'number' && data.rate > 0) {
+      // ✅ Succès — mise en cache
+      rateCache.set(cacheKey, { rate: data.rate, ts: Date.now() });
+      return {
+        rate:      data.rate,
+        source:    'live',
+        updatedAt: new Date().toISOString(),
+      };
     }
     // Réponse Worker OK mais taux invalide ou devise non supportée → fallback
   } catch {
+    recordLocalUsage({
+      service: 'currency',
+      category: 'worker',
+      endpoint: '/currency',
+      method: 'GET',
+      status: 'fallback',
+      errorReason: 'network_or_timeout',
+      details: { from, to },
+    });
     // Timeout ou Worker indisponible → fallback offline
   }
 

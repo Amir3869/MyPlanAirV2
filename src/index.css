@@ -139,3 +139,84 @@ input[type=number] { appearance: textfield; }
 /* Safe area */
 .pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 .pt-safe { padding-top: max(0.5rem, env(safe-area-inset-top)); }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   LEAFLET — Carte Monde (2D) — Styles premium
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Tuiles CartoDB Voyager assombries */
+.leaflet-dark-theme .leaflet-tile-pane {
+  filter: brightness(0.5) saturate(0.65) contrast(1.1);
+}
+
+/* Attribution Leaflet masquée */
+.leaflet-control-attribution {
+  display: none !important;
+}
+
+/* Zoom controls style glass */
+.leaflet-control-zoom {
+  border: none !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+}
+.leaflet-control-zoom a {
+  background: rgba(14,14,20,0.92) !important;
+  color: rgba(255,255,255,0.7) !important;
+  border: none !important;
+  backdrop-filter: blur(16px);
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  font-size: 16px !important;
+}
+
+/* Popup glassmorphism */
+.leaflet-popup-content-wrapper {
+  background: rgba(14, 14, 20, 0.95) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: white !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5) !important;
+  padding: 0 !important;
+}
+.leaflet-popup-content {
+  margin: 14px 16px !important;
+  font-family: 'Inter', -apple-system, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+}
+.leaflet-popup-tip {
+  background: rgba(14, 14, 20, 0.95) !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.leaflet-popup-close-button {
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 18px !important;
+  top: 8px !important;
+  right: 10px !important;
+}
+.leaflet-popup-close-button:hover {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* Home marker — pas de fond blanc Leaflet */
+.home-marker-icon,
+.distance-bubble-icon {
+  background: none !important;
+  border: none !important;
+}
+
+/* Trip marker ongoing — glow pulse */
+.trip-marker-ongoing {
+  filter: drop-shadow(0 0 6px rgba(86, 197, 164, 0.5));
+  animation: markerPulse 2s ease-in-out infinite;
+}
+@keyframes markerPulse {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(86,197,164,0.5)); }
+  50% { filter: drop-shadow(0 0 12px rgba(86,197,164,0.8)); }
+}
