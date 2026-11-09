@@ -184,32 +184,3 @@ describe('tripStore — checklist', () => {
     expect(useTripStore.getState().trips[0].checklist).toHaveLength(0);
   });
 });
-
-describe('tripStore — notifications', () => {
-  it('addNotification is a no-op when notifications are disabled', () => {
-    useTripStore.getState().setNotificationsEnabled(false);
-    useTripStore.getState().addNotification({ type: 'tip', title: 'Astuce', body: 'Buvez de l’eau' });
-    expect(useTripStore.getState().notifications).toHaveLength(0);
-  });
-
-  it('addNotification is a no-op for a trip with notifications disabled', () => {
-    useTripStore.getState().toggleNotifForTrip('a');
-    useTripStore.getState().addNotification({ type: 'tip', title: 'Astuce', body: 'x', tripId: 'a' });
-    expect(useTripStore.getState().notifications).toHaveLength(0);
-  });
-
-  it('addNotification replaces an existing entry with the same dedupeKey', () => {
-    useTripStore.getState().addNotification({ type: 'tip', title: 'Astuce 1', body: 'x', dedupeKey: 'k' });
-    useTripStore.getState().addNotification({ type: 'tip', title: 'Astuce 2', body: 'y', dedupeKey: 'k' });
-    const notifs = useTripStore.getState().notifications;
-    expect(notifs).toHaveLength(1);
-    expect(notifs[0].title).toBe('Astuce 2');
-  });
-
-  it('markAllNotifsRead marks every notification as read', () => {
-    useTripStore.getState().addNotification({ type: 'tip', title: 'A', body: 'x' });
-    useTripStore.getState().addNotification({ type: 'tip', title: 'B', body: 'y' });
-    useTripStore.getState().markAllNotifsRead();
-    expect(useTripStore.getState().notifications.every((n) => n.read)).toBe(true);
-  });
-});

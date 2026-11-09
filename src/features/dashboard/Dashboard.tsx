@@ -13,7 +13,6 @@ import {
 import { useClerk } from '@clerk/clerk-react';
 import { useTripStore, type Trip } from '../../store/tripStore';
 import { GlassCard } from '../../shared/GlassCard';
-import { BellWithBadge, NotificationCenter, useNotificationGenerator } from '../notifications/NotificationCenter';
 import { tripStatus, dayCounter, fmtRange, getTripProgress } from '../../utils/dateHelpers';
 import { fmtMoney } from '../../utils/formatters';
 import { haversineKm } from '../../utils/geo';
@@ -408,7 +407,6 @@ const AriaSection = ({ currentTrip }: { currentTrip: Pick<Trip, 'destination' | 
 export const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useClerk();
-  const [notifOpen, setNotifOpen] = useState(false);
   const [createChoiceOpen, setCreateChoiceOpen] = useState(false);
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [prepTrip, setPrepTrip] = useState<Trip | null>(null);
@@ -418,8 +416,6 @@ export const Dashboard = () => {
   const userPhotoUrl = useTripStore((s) => s.userPhotoUrl);
   const homeLat      = useTripStore((s) => s.homeLat);
   const homeLon      = useTripStore((s) => s.homeLon);
-
-  useNotificationGenerator();
 
   const avatarUrl = userPhotoUrl ?? user?.imageUrl ?? null;
 
@@ -533,7 +529,6 @@ export const Dashboard = () => {
             <div className="text-xs text-white/30 mt-0.5 capitalize">{dateStr}</div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
-            <BellWithBadge onClick={() => setNotifOpen(true)} />
             <Avatar name={userName} photoUrl={avatarUrl} onClick={() => navigate('/profil')} />
           </div>
         </div>
@@ -583,7 +578,7 @@ export const Dashboard = () => {
 
           <GridCard index={2} emoji="🛒" label="Marketplace" value="Vols · Hôtels" sublabel="eSIM · Assurance · Activités" accentColor="#a78bfa" onClick={() => navigate('/decouvrir')} />
 
-          {/* 4ème carte dynamique : Documents (en cours) / Budget (à venir) / Communauté */}
+          {/* 4ème carte dynamique : Documents (en cours) / Budget (à venir) / Explorer */}
           {(() => {
             const currentStatus = currentTrip ? tripStatus(currentTrip.startDate, currentTrip.endDate) : null;
             // Voyage EN COURS → Documents
@@ -618,17 +613,15 @@ export const Dashboard = () => {
                 <GridCard index={3} emoji="💰" label="Budget" value={`${budgetWidget.pct}%`} sublabel={`${fmtMoney(budgetWidget.spent, budgetWidget.currency)} / ${fmtMoney(budgetWidget.budget, budgetWidget.currency)}`} accentColor={budgetWidget.pct > 90 ? '#ef4444' : '#56c5a4'} onClick={() => navigate(`/trip/${currentTrip!.id}/budget`)} />
               );
             }
-            // Aucun voyage → Communauté placeholder
+            // Aucun voyage → Explorer / Découvrir
             return (
-              <GridCard index={3} emoji="👥" label="Communauté" value="Bientôt" sublabel="Partagez vos aventures" accentColor="rgba(255,255,255,0.25)" onClick={() => {}} />
+              <GridCard index={3} emoji="🧭" label="Explorer" value="Découvrir" sublabel="Idées et inspirations voyage" accentColor="#06b6d4" onClick={() => navigate('/decouvrir')} />
             );
           })()}
         </div>
 
         <AriaSection currentTrip={currentTrip} />
       </main>
-
-      <NotificationCenter open={notifOpen} onClose={() => setNotifOpen(false)} />
 
       {/* Create Choice Sheet */}
       <CreateChoiceSheet

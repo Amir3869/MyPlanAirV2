@@ -145,22 +145,6 @@ export type ChatMessage = {
   createdAt: string;
 };
 
-// ─── AppNotification ────────────────────────────────────────────────────────
-
-export type AppNotification = {
-  id:        string;
-  type:      'countdown' | 'checklist' | 'rate' | 'tip' | 'documents' | 'weather';
-  tripId?:   string;
-  dedupeKey?: string;
-  title:     string;
-  body:      string;
-  read:      boolean;
-  createdAt: string;
-  startDate?: string;
-  endDate?:   string;
-  tripName?:  string;
-};
-
 // ─── PlannerSuggestion (Découvrir — Planificateur) ─────────────────────────
 
 export type PlannerSuggestion = {

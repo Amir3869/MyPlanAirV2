@@ -10,7 +10,6 @@ import type {
   Participant,
   Trip,
   ChatMessage,
-  AppNotification,
   AppTheme,
   TravelStyle,
 } from './types';
@@ -23,7 +22,6 @@ export type {
   StepType,
   AppTheme,
   TravelStyle,
-  AppNotification,
   TripDestination,
   Step,
   Expense,
@@ -67,11 +65,6 @@ type State = {
 
   // ── Collaboration ─────────────────────────────────────────────────────
   participants:    Record<string, Participant[]>;  // ✅ V5 — tripId → participants
-
-  // ── Notifications ─────────────────────────────────────────────────────
-  notifications:          AppNotification[];
-  notificationsEnabled:   boolean;
-  notifDisabledTrips:     string[];
 
   // ── Chat ──────────────────────────────────────────────────────────────
   chatHistories: Record<string, ChatMessage[]>;
@@ -141,16 +134,6 @@ type State = {
   markSuggestionUsed:   (key: string, suggestion: string) => void;
   clearUsedSuggestions: (key: string) => void;
 
-  // ── Notifications actions ─────────────────────────────────────────────
-  addNotification:          (n: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => void;
-  replaceOrAddNotification: (n: Omit<AppNotification, 'id' | 'createdAt' | 'read'>, matchKey: string) => void;
-  markNotifRead:            (id: string) => void;
-  markAllNotifsRead:        () => void;
-  removeNotification:       (id: string) => void;
-  clearNotifications:       () => void;
-  setNotificationsEnabled:  (v: boolean) => void;
-  toggleNotifForTrip:       (tripId: string) => void;
-
   // ── Chat actions ──────────────────────────────────────────────────────
   addChatMessage:   (tripId: string, msg: Omit<ChatMessage, 'id' | 'createdAt'>) => void;
   clearChatHistory: (tripId: string) => void;
@@ -190,11 +173,6 @@ export const useTripStore = create<State>()(
 
       // ── Collaboration ────────────────────────────────────────────────
       participants:    {},                 // ✅ V5
-
-      // ── Notifications ────────────────────────────────────────────────
-      notifications:        [],
-      notificationsEnabled: true,
-      notifDisabledTrips:   [],
 
       // ── Chat & AI ────────────────────────────────────────────────────
       chatHistories:   {},
@@ -375,87 +353,6 @@ export const useTripStore = create<State>()(
         usedSuggestions: { ...s.usedSuggestions, [key]: [] },
       })),
 
-      // ── Notifications ─────────────────────────────────────────────────
-      addNotification: (n) => set((s) => {
-        if (!s.notificationsEnabled) return s;
-        if (n.tripId && s.notifDisabledTrips.includes(n.tripId)) return s;
-
-        const newNotif: AppNotification = {
-          ...n,
-          id:        crypto.randomUUID(),
-          read:      false,
-          createdAt: new Date().toISOString(),
-        };
-
-        if (n.dedupeKey) {
-          const existingIndex = s.notifications.findIndex((existing) => existing.dedupeKey === n.dedupeKey);
-          if (existingIndex !== -1) {
-            const updated = [...s.notifications];
-            updated[existingIndex] = newNotif;
-            return { notifications: updated };
-          }
-        }
-
-        return {
-          notifications: [newNotif, ...s.notifications].slice(0, 50),
-        };
-      }),
-
-      replaceOrAddNotification: (n, matchKey) => set((s) => {
-        if (!s.notificationsEnabled) return s;
-        if (n.tripId && s.notifDisabledTrips.includes(n.tripId)) return s;
-
-        const existingIndex = s.notifications.findIndex((existing) => {
-          if (n.dedupeKey && existing.dedupeKey === n.dedupeKey) return true;
-          return existing.tripId === n.tripId &&
-            existing.type === n.type &&
-            existing.title.includes(matchKey);
-        });
-
-        const newNotif: AppNotification = {
-          ...n,
-          id:        crypto.randomUUID(),
-          read:      false,
-          createdAt: new Date().toISOString(),
-        };
-
-        if (existingIndex !== -1) {
-          const updated = [...s.notifications];
-          updated[existingIndex] = newNotif;
-          return { notifications: updated };
-        }
-
-        return {
-          notifications: [newNotif, ...s.notifications].slice(0, 50),
-        };
-      }),
-
-      markNotifRead: (id) => set((s) => ({
-        notifications: s.notifications.map((n) =>
-          n.id === id ? { ...n, read: true } : n,
-        ),
-      })),
-
-      markAllNotifsRead: () => set((s) => ({
-        notifications: s.notifications.map((n) => ({ ...n, read: true })),
-      })),
-
-      removeNotification: (id) => set((s) => ({
-        notifications: s.notifications.filter((n) => n.id !== id),
-      })),
-
-      clearNotifications: () => set({ notifications: [] }),
-
-      setNotificationsEnabled: (v) => set({ notificationsEnabled: v }),
-
-      toggleNotifForTrip: (tripId) => set((s) => {
-        const disabled = s.notifDisabledTrips;
-        if (disabled.includes(tripId)) {
-          return { notifDisabledTrips: disabled.filter((id) => id !== tripId) };
-        }
-        return { notifDisabledTrips: [...disabled, tripId] };
-      }),
-
       // ── Chat ──────────────────────────────────────────────────────────
       addChatMessage: (tripId, msg) => set((s) => ({
         chatHistories: {
@@ -499,9 +396,6 @@ export const useTripStore = create<State>()(
         homeLon:              state.homeLon,                // ✅ V5.2
         pinnedTripIds:        state.pinnedTripIds,           // ✅ V5
         participants:         state.participants,            // ✅ V5
-        notifications:        state.notifications,
-        notificationsEnabled: state.notificationsEnabled,
-        notifDisabledTrips:   state.notifDisabledTrips,
         chatHistories:        state.chatHistories,
       }),
 
@@ -548,9 +442,6 @@ export const useTripStore = create<State>()(
             homeLon:              (state.homeLon              as number)            ?? 2.3522,
             pinnedTripIds:        (state.pinnedTripIds        as string[])          ?? [],
             participants:         (state.participants         as Record<string, Participant[]>) ?? {},
-            notifications:        (state.notifications        as AppNotification[]) ?? [],
-            notificationsEnabled: (state.notificationsEnabled as boolean)           ?? true,
-            notifDisabledTrips:   (state.notifDisabledTrips   as string[])          ?? [],
             chatHistories:        (state.chatHistories        as Record<string, ChatMessage[]>) ?? {},
             aiSuggestions:        (state.aiSuggestions        as Record<string, string[]>) ?? {},
             usedSuggestions:      (state.usedSuggestions      as Record<string, string[]>) ?? {},
@@ -588,14 +479,6 @@ export const useTripStore = create<State>()(
             setAiSuggestions:       () => {},
             markSuggestionUsed:     () => {},
             clearUsedSuggestions:   () => {},
-            addNotification:        () => {},
-            replaceOrAddNotification: () => {},
-            markNotifRead:          () => {},
-            markAllNotifsRead:      () => {},
-            removeNotification:     () => {},
-            clearNotifications:     () => {},
-            setNotificationsEnabled: () => {},
-            toggleNotifForTrip:     () => {},
             addChatMessage:         () => {},
             clearChatHistory:       () => {},
             // ── FAB trigger ─────────────────────────────────────────

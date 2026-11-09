@@ -105,18 +105,6 @@ describe('Profil — preferences', () => {
     await user.click(screen.getByText('Famille'));
     expect(useTripStore.getState().travelStyle).toBe('family');
   });
-
-  it('toggles notifications preference', async () => {
-    const user = userEvent.setup();
-    useTripStore.setState({ notificationsEnabled: true });
-    render(<Profil />);
-
-    const notifRow = screen.getByText('Notifications').closest('div')!.parentElement!.parentElement!;
-    const toggleButton = notifRow.querySelector('button')!;
-    await user.click(toggleButton);
-
-    expect(useTripStore.getState().notificationsEnabled).toBe(false);
-  });
 });
 
 describe('Profil — data management', () => {
@@ -132,11 +120,6 @@ describe('Profil — data management', () => {
 
     expect(createObjectURL).toHaveBeenCalled();
     vi.unstubAllGlobals();
-  });
-
-  it('keeps "Exporter en PDF" disabled (not yet implemented)', () => {
-    render(<Profil />);
-    expect(screen.getByText('Exporter en PDF').closest('button')).toBeDisabled();
   });
 
   it('clears local data (IndexedDB + localStorage) after confirming', async () => {

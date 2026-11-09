@@ -15,14 +15,6 @@ vi.mock('@clerk/clerk-react', () => ({
   useClerk: () => ({ user: null }),
 }));
 
-vi.mock('../notifications/NotificationCenter', () => ({
-  useNotificationGenerator: () => {},
-  BellWithBadge: ({ onClick }: { onClick: () => void }) => (
-    <button aria-label="Notifications" onClick={onClick}>🔔</button>
-  ),
-  NotificationCenter: () => null,
-}));
-
 const makeTrip = (overrides: Partial<Trip> = {}): Trip => ({
   id: 'trip-1',
   destination: 'Kyoto',

@@ -64,6 +64,17 @@ export const ImageCropSheet = ({
     : 1;
   const previewWidth = imageSize ? imageSize.width * previewBaseScale * zoom : PREVIEW_SIZE * zoom;
   const previewHeight = imageSize ? imageSize.height * previewBaseScale * zoom : PREVIEW_SIZE * zoom;
+  const maxOffsetX = Math.max(0, (previewWidth - PREVIEW_SIZE) / 2);
+  const maxOffsetY = Math.max(0, (previewHeight - PREVIEW_SIZE) / 2);
+  const clampOffset = (value: Offset): Offset => ({
+    x: Math.min(maxOffsetX, Math.max(-maxOffsetX, value.x)),
+    y: Math.min(maxOffsetY, Math.max(-maxOffsetY, value.y)),
+  });
+
+  useEffect(() => {
+    setOffset((current) => clampOffset(current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maxOffsetX, maxOffsetY]);
 
   const confirm = async () => {
     if (!imageUrl) return;
@@ -174,10 +185,10 @@ export const ImageCropSheet = ({
                   if (!dragStartRef.current) return;
                   const dx = event.clientX - dragStartRef.current.pointerX;
                   const dy = event.clientY - dragStartRef.current.pointerY;
-                  setOffset({
+                  setOffset(clampOffset({
                     x: dragStartRef.current.offset.x + dx,
                     y: dragStartRef.current.offset.y + dy,
-                  });
+                  }));
                 }}
                 onPointerUp={(event) => {
                   event.currentTarget.releasePointerCapture(event.pointerId);

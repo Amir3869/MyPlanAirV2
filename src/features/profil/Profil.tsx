@@ -3,17 +3,17 @@
 // Page Profil — Route "/profil"
 // Avatar + Photo upload + Stats + Réglages + Abonnement + Déconnexion
 // CONFORME au Plan d'Action validé — tous les éléments présents
-// + Édition nom inline premium + Emoji avatar + Méthode connexion + PDF bientôt
+// + Édition nom inline premium + Emoji avatar + Méthode connexion
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { useRef, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Palette, Coins, Luggage, Bell, LogOut,
+  Palette, Coins, Luggage, LogOut,
   Download, Trash2, ChevronRight, Check,
   Shield, Star, Camera, Image,
-  Pencil, FileText, Home, MapPin, Search,
+  Pencil, Home, MapPin, Search,
   Activity,
 } from 'lucide-react';
 import { useClerk, useUser } from '@clerk/clerk-react';
@@ -84,12 +84,10 @@ export const Profil = () => {
   const homeCurrency        = useTripStore((s) => s.homeCurrency);
   const theme               = useTripStore((s) => s.theme);
   const travelStyle         = useTripStore((s) => s.travelStyle);
-  const notificationsEnabled = useTripStore((s) => s.notificationsEnabled);
   const trips               = useTripStore((s) => s.trips);
   const setHomeCurrency     = useTripStore((s) => s.setHomeCurrency);
   const setTheme            = useTripStore((s) => s.setTheme);
   const setTravelStyle      = useTripStore((s) => s.setTravelStyle);
-  const setNotificationsEnabled = useTripStore((s) => s.setNotificationsEnabled);
   const homeCity               = useTripStore((s) => s.homeCity);
   const homeCountryCode        = useTripStore((s) => s.homeCountryCode);
   const homeLat                = useTripStore((s) => s.homeLat);
@@ -261,7 +259,6 @@ export const Profil = () => {
         homeLon,
         theme,
         travelStyle,
-        notificationsEnabled,
       },
       trips,
       note: 'Export local : les fichiers documents et photos souvenirs stockés en IndexedDB ne sont pas inclus.',
@@ -579,7 +576,7 @@ export const Profil = () => {
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════════
-            4. PRÉFÉRENCES — Devise + Style voyage + Notifications
+            4. PRÉFÉRENCES — Devise + Style voyage
             ══════════════════════════════════════════════════════════════════════ */}
         <div>
           <div className="text-xs uppercase tracking-wider text-white/35 mb-2 px-1">Préférences</div>
@@ -663,31 +660,6 @@ export const Profil = () => {
                 </motion.div>
               )}
             </AnimatePresence>
-
-            {/* Notifications */}
-            <div className="flex items-center gap-3 px-4 py-3.5">
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(86,197,164,0.2)' }}>
-                <Bell size={15} style={{ color: '#56c5a4' }} />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-medium">Notifications</div>
-                <div className="text-xs text-white/35">{notificationsEnabled ? 'Activées' : 'Désactivées'}</div>
-              </div>
-              {/* Toggle iOS-style */}
-              <button
-                onClick={() => { haptic(5); setNotificationsEnabled(!notificationsEnabled); }}
-                className="relative w-12 h-7 rounded-full tap transition-colors duration-200"
-                style={{
-                  background: notificationsEnabled ? 'var(--accent-from)' : 'rgba(255,255,255,0.12)',
-                }}
-              >
-                <motion.div
-                  className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-md"
-                  animate={{ left: notificationsEnabled ? 22 : 2 }}
-                  transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-                />
-              </button>
-            </div>
 
             {/* 🏠 Ville de résidence */}
             <button
@@ -917,7 +889,7 @@ export const Profil = () => {
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════════
-            6. DONNÉES — Sauvegarde + PDF + Supprimer compte
+            6. DONNÉES — Sauvegarde + Supprimer compte
             ══════════════════════════════════════════════════════════════════════ */}
         <div>
           <div className="text-xs uppercase tracking-wider text-white/35 mb-2 px-1">Données</div>
@@ -932,26 +904,6 @@ export const Profil = () => {
                 <div className="text-xs text-white/35">Voyages et préférences · hors fichiers locaux</div>
               </div>
               <span className="text-white/45 text-xs">JSON</span>
-            </button>
-
-            {/* Export PDF — Bientôt */}
-            <button
-              disabled
-              className="w-full flex items-center gap-3 px-4 py-3.5 opacity-50 cursor-not-allowed"
-            >
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(124,140,255,0.15)' }}>
-                <FileText size={15} style={{ color: '#7c8cff' }} />
-              </div>
-              <div className="flex-1 text-left">
-                <div className="text-sm font-medium">Exporter en PDF</div>
-                <div className="text-xs text-white/35">Souvenir de voyage à partager et imprimer</div>
-              </div>
-              <span
-                className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                style={{ background: 'rgba(var(--accent-from-rgb), 0.15)', color: 'var(--accent-label)' }}
-              >
-                Bientôt
-              </span>
             </button>
 
             {/* Effacer les données locales */}
